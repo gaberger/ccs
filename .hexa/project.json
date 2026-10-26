@@ -1,0 +1,10 @@
+{
+  "analyze": {
+    "exclude": []
+  },
+  "createdAt": "2026-10-26T16:12:12.994227+00:00",
+  "hexVersion": "26.9.12",
+  "id": "be74d77a-58c6-4b44-a0d4-da90e34f37f2",
+  "lifecycle_enforcement": "mandatory",
+  "name": "ccs"
+}
