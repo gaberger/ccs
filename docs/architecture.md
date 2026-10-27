@@ -40,8 +40,10 @@ better (`Profile as LoadedProfile`, `Use as Entry`). That way an adapter has
 one edge into the core, not two.
 
 `hexa analyze` lets a primary adapter import use cases. This project is
-stricter: `tests/boundaries.rs` reads the TUI's source and fails if it imports
-anything outside `ports`.
+stricter: `tests/boundaries.rs` reads every `.rs` file under
+`src/adapters/primary/` and fails on any line that names `crate::usecases`,
+`crate::domain` or `crate::adapters::secondary`. It also fails if it finds no
+file, so it can't pass over nothing.
 
 ## Domain
 
@@ -50,6 +52,8 @@ values, so `tests/domain.rs` tests it without a disk or a process. It holds:
 
 - **Names.** `ProfileName` and `KitName` parse and reject reserved words
   (`list`, `kit`, `library`, …), so a profile can never shadow a command.
+  `sync` is reserved too: `parse_command` refuses `ccs sync`, which is decided
+  but not built, and says to copy `$CCS_HOME/library/` instead.
 - **`profile.env`.** `parse_env` reads `KEY=VALUE` lines. The file is never run
   by a shell. `check_env` produces the `Finding`s that `ccs doctor` reports.
 - **Resolution.** `resolve` picks the first non-blank of: argument, pin file,
@@ -57,8 +61,9 @@ values, so `tests/domain.rs` tests it without a disk or a process. It holds:
   `None`. It never falls back to `~/.claude`.
 - **Launch plans.** `plan_launch` turns a `Profile` into a `LaunchPlan`:
   variables to unset (every name in `PROVIDER_VARS`), variables to set, and
-  arguments. `with_kits` and `kit_args` add the `--plugin-dir` flags and the
-  instructions file. `render_exports` prints a plan as shell for `ccs env`.
+  arguments. `kit_args` makes the `--plugin-dir` flags and the instructions
+  flag, and `with_kits` puts arguments in front of the user's and sets
+  `CCS_KITS`. `render_exports` prints a plan as shell for `ccs env`.
 - **Entries and kits.** `Use` is an entry (`skills/x`, `agents/x`,
   `plugins/x`, or a folder `skills/net/`). `resolve_kit` matches a kit's
   entries against the library and returns what it found and what is missing.
@@ -95,9 +100,11 @@ dir.
 | `Browser` | **driving port**: everything the TUI may ask | `usecases::App` |
 
 `Browser` points the other way from the rest. The TUI calls it, and
-`usecases::App` implements it, with each method delegating to an existing use
-case. So the TUI can't do anything the CLI can't, and `tests/tui.rs` drives it
-with a fake `Browser`.
+`usecases::App` implements it. Most methods delegate to an existing use case;
+the plain reads (`kits`, `kit_uses`, `kit_instructions`, `complete_path`) call
+a port directly. Either way the TUI reaches only what the CLI reaches, so it
+can't do anything the CLI can't, and `tests/tui.rs` drives it with a fake
+`Browser`.
 
 ## Use cases
 
@@ -109,14 +116,35 @@ adapter. A rule that changes several stores together lives here. For example,
 
 ## Composition root
 
-`src/lib.rs` is the only file that names a concrete adapter, reads the process
-environment, or prints. `dispatch`:
+`src/lib.rs` is the only file that names a concrete adapter, prints, or reads
+configuration from the environment. An adapter touches the environment only
+for its own mechanics: `ExecLauncher` looks for its program on `PATH`,
+`GitFetcher` and `GhReleases` make folders under `temp_dir()`, and
+`GhReleases` finds the running binary with `current_exe()`.
+
+`lib.rs` also exports one factory per port it can build from a path or a
+variable: `profile_store`, `legacy`, `library`, `kit_store`, `path_input`,
+`pin_locator`, `fetcher` and `editor`. `dispatch` uses them, and so do
+`tests/assets.rs` and `tests/profiles.rs`, to get the real adapter behind a
+port. `dispatch`:
 
 1. reads `HOME` and `CCS_HOME`, plus the `CCS_*_BIN` overrides (`claude`,
    `aws`, `git`, `gh`)
-2. builds each adapter once, rooted at `$CCS_HOME`
+2. builds the adapters every command shares, once, rooted at `$CCS_HOME`
 3. parses the command with `domain::parse_command`
 4. calls the use case, prints its result, and returns an exit code
+
+A command reads the other variables it needs and builds the adapters only it
+uses, in its own branch:
+
+- resolving a name reads `CCS_PROFILE`
+- the editor is `$VISUAL`, else `$EDITOR`, else `vi`; `library` and `kit`
+  build their own `ProcessEditor`
+- the TUI's shell is a second `ExecLauncher`, running `$SHELL` (else `/bin/sh`)
+- `upgrade` builds `GhReleases` from `CCS_GH_BIN` and `CCS_REPO` (default
+  `gaberger/ccs`)
+- `statusline` builds `ProcessRunner` and `FsText` on each call, and passes the
+  whole environment to the use case
 
 The `CCS_*_BIN` variables are how the tests replace `claude`, `aws`, `git` and
 `gh` with scripts, while still running the real binary.
@@ -132,7 +160,9 @@ The `CCS_*_BIN` variables are how the tests replace `claude`, `aws`, `git` and
    default.
 3. **Load.** `ProfileStore::load` reads `<home>/work/profile.env` and the
    config dir `<home>/work/config/`.
-4. **Build kits.** For each kit, `prepare_launch`:
+4. **Build kits.** `prepare_launch` takes the kits named on the command line,
+   else the profile's own. A kit that doesn't exist stops the launch
+   (`no kit '<name>'`). Then, for each kit, it:
    - resolves its entries against the library, collecting a warning for each
      missing one (a missing entry doesn't stop the launch)
    - splits out picked plugins, which load as they are, and dedups them
@@ -141,13 +171,19 @@ The `CCS_*_BIN` variables are how the tests replace `claude`, `aws`, `git` and
      it as a plugin. Skills are links into the library, so edits show up
      immediately. Agents are copies, because Claude Code doesn't read an agent
      through a link.
-   - appends the kit's instructions to one prompt file
+   - appends the kit's instructions to one prompt file,
+     `<home>/.build/<kit+kit…>.md`
+
+   When a kit and a picked plugin share a name, both name their skills
+   `<name>:…`, so `prepare_launch` warns and says to rename the kit. The
+   launch goes on.
 5. **Plan.** `plan_launch` unsets the provider variables inherited from the
    shell, so a Bedrock export can't leak into a personal login. It then sets
-   the profile's variables, `CLAUDE_CONFIG_DIR` and `CCS_PROFILE`. `with_kits`
-   adds `CCS_KITS` and puts `--settings <status line>`, one `--plugin-dir` per
-   kit and plugin, and `--append-system-prompt-file` in front of the user's
-   arguments.
+   the profile's variables, `CLAUDE_CONFIG_DIR` and `CCS_PROFILE`.
+   `prepare_launch` builds the extra arguments: `--settings <status line>`,
+   then, from `kit_args`, one `--plugin-dir` per kit and plugin and
+   `--append-system-prompt-file`. `with_kits` adds `CCS_KITS` and puts those
+   arguments in front of the user's.
 6. **Exec.** `ExecLauncher::launch` replaces the ccs process with `claude`.
    Signals, the TTY and the exit code belong to Claude Code, with no wrapper in
    between. `launch` only returns if the exec failed.
@@ -167,8 +203,13 @@ $CCS_HOME/                    default ~/.claude-profiles
     skills/<folders…>/<name>/ a skill folder
     agents/<folders…>/<name>.md
     plugins/<name>/           a git checkout, loaded as itself
-  kits/<kit>/                 the kit's entries, its CLAUDE.md, an optional .mcp.json
+  kits/<kit>/
+    uses                      the kit's entries, one per line
+    CLAUDE.md                 the kit's instructions
+    .mcp.json                 optional
+  .default                    the default profile's name
   .build/<kit>/               rebuilt on every launch; never edit
+  .build/<kit+kit…>.md        one launch's joined instructions
   .trash/                     where rm, migrate and kit rm move things
 ```
 
@@ -182,14 +223,19 @@ to it.
 - `State` takes a `Key` (the adapter's own key type) or a mouse hit and updates
   itself, calling `Browser` for anything that reads or changes data
 - `draw(frame, &State)` paints it
-- `run` is the only part that touches a terminal: alternate screen, mouse
-  capture, the event loop
+- `run` is the only public part that touches a terminal. It calls the private
+  `drive`, which opens the terminal (`open_terminal`: alternate screen, mouse
+  capture), runs the event loop, and closes it (`close_terminal`) on every
+  path. To hand off to an editor, `drive` closes the terminal, waits for the
+  editor, and opens it again.
 
 Because only `run` needs a terminal, `tests/tui.rs` drives `State` with keys
-and draws into ratatui's `TestBackend`. Leaving the TUI returns
-`Exit::Launch(name)`, and `lib.rs` restores the terminal before launching
-exactly as `ccs <name>` would. Pages and keys are specified in ADR-2610261643
-§18.
+and draws into ratatui's `TestBackend`. Leaving the TUI returns an `Exit`:
+`Quit`, `Launch(name)` with the profile's kits, `LaunchWith { profile, kits }`
+with kits picked for this launch only, or `Shell(name)`, a shell in the
+profile's folder with its variables. The terminal is restored by then, and
+`lib.rs` launches exactly as `ccs <name>` would, or execs `$SHELL` for
+`Shell`. Pages and keys are specified in ADR-2610261643 §18.
 
 ## Status line
 
@@ -213,16 +259,20 @@ the new binary over the running one only if all of these hold:
 - the unpacked binary runs
 - the binary reports the expected version
 
-If any step fails, nothing is installed (ADR-2610271000).
+If any step fails, nothing is installed (ADR-2610271000). Whatever the
+outcome, `Releases::discard` removes the download folder after every attempt;
+if the download itself fails, `GhReleases` removes the folder it made.
 
 ## The gate
 
 ```bash
-cargo test && hexa analyze . --grade A+
+cargo test && hexa analyze . --grade A+ --exit-code
 ```
 
-`.github/workflows/ci.yml` runs it, along with clippy, on every push and pull request. The tests are split by what
-they guard:
+`.github/workflows/ci.yml` runs it, along with clippy, on pushes to `main`, on
+pull requests, and when `release.yml` calls it. CI also adds up the passed
+counts of every `test result:` line and fails on 0, so a run with no tests is a
+failure, not a pass. The tests are split by what they guard:
 
 | Test | Guards |
 |---|---|
@@ -232,7 +282,7 @@ they guard:
 | `upgrade.rs` | `ccs upgrade` against a fake `gh` serving archives built in the test |
 | `assets.rs` | item front matter, typed paths, the real `App` behind `Browser` |
 | `tui.rs` | the TUI through keys and `TestBackend`, with a fake `Browser` |
-| `boundaries.rs` | the TUI imports `ports` only |
+| `boundaries.rs` | primary adapters import none of `usecases`, `domain`, secondary adapters |
 
 No test touches the real `~/.claude`.
 
