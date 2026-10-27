@@ -22,8 +22,8 @@ pub mod usecases;
 
 use adapters::secondary::{
     aws_cli::AwsCli, exec_launcher::ExecLauncher, fs_kits::FsKitStore, fs_legacy::FsLegacy, fs_library::FsLibrary,
-    fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, process_editor::ProcessEditor,
-    process_runner::ProcessRunner,
+    fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, git_fetcher::GitFetcher,
+    process_editor::ProcessEditor, process_runner::ProcessRunner,
 };
 use adapters::primary::tui;
 use domain::{
@@ -59,6 +59,11 @@ pub fn path_input(home: PathBuf, cwd: PathBuf) -> impl ports::PathInput {
 }
 
 /// The editor `ccs … edit` and the TUI's `e` open: `$VISUAL`, else `$EDITOR`, else `vi`.
+/// `git`, or `$CCS_GIT_BIN`.
+pub fn fetcher() -> impl ports::Fetcher {
+    GitFetcher::new(var("CCS_GIT_BIN").unwrap_or_else(|| "git".into()))
+}
+
 pub fn editor() -> impl ports::Editor {
     ProcessEditor::new(&var("VISUAL").or_else(|| var("EDITOR")).unwrap_or_else(|| "vi".into()))
 }
@@ -108,6 +113,7 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
     let paths = path_input(user_home.clone(), std::env::current_dir().map_err(|e| CcsError::Io(format!("current dir: {e}")))?);
     let ed = editor();
     let aws = AwsCli::new(var("CCS_AWS_BIN").unwrap_or_else(|| "aws".into()));
+    let fetch = fetcher();
     let claude_available = launcher.available();
     let app = |current: Option<String>| usecases::App {
         store: &store,
@@ -117,6 +123,7 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
         paths: &paths,
         editor: &ed,
         aws: &aws,
+        fetch: &fetch,
         ccs_bin: ccs_bin(),
         claude_available,
         current,
@@ -269,7 +276,7 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             hint_migrate();
             ui(resolve(None).ok().map(|n| n.as_str().to_string()))
         }
-        Command::Library(cmd) => library_command(&lib, &kits, &editor(), cmd),
+        Command::Library(cmd) => library_command(&lib, &kits, &editor(), &fetch, cmd),
         Command::Kit(cmd) => kit_command(&store, &kits, &lib, &editor(), cmd),
         Command::Help => {
             print!("{HELP}");
@@ -287,14 +294,23 @@ fn launch(prepared: &(domain::LaunchPlan, Vec<String>), launcher: &dyn Launcher)
 }
 
 /// `ccs library …` (ADR-2610261643).
-fn library_command(lib: &dyn ports::Library, kits: &dyn ports::KitStore, editor: &dyn ports::Editor, cmd: LibraryCmd) -> Result<i32, CcsError> {
+fn library_command(
+    lib: &dyn ports::Library,
+    kits: &dyn ports::KitStore,
+    editor: &dyn ports::Editor,
+    fetch: &dyn ports::Fetcher,
+    cmd: LibraryCmd,
+) -> Result<i32, CcsError> {
     match cmd {
         LibraryCmd::List(only) => {
-            for kind in [Kind::Skill, Kind::Agent].into_iter().filter(|k| only.is_none_or(|o| o == *k)) {
+            for kind in [Kind::Skill, Kind::Agent, Kind::Plugin].into_iter().filter(|k| only.is_none_or(|o| o == *k)) {
                 let (items, folders) = usecases::library_list(lib, kind);
                 println!("{}", kind.dir());
                 if items.is_empty() && folders.is_empty() {
-                    println!("  (none; add with: ccs library add <path> [--in <folder>])");
+                    match kind {
+                        Kind::Plugin => println!("  (none; add with: ccs library add <owner/repo | git URL | path>)"),
+                        _ => println!("  (none; add with: ccs library add <path> [--in <folder>])"),
+                    }
                 }
                 let rows = library_tree(&items, &folders);
                 let width = rows.iter().filter(|r| r.item.is_some()).map(|r| 2 * r.depth + r.leaf().len()).max().unwrap_or(0);
@@ -311,7 +327,7 @@ fn library_command(lib: &dyn ports::Library, kits: &dyn ports::KitStore, editor:
             }
         }
         LibraryCmd::Add { source, folder } => {
-            let (kind, name) = usecases::library_add(lib, std::path::Path::new(&source), &folder)?;
+            let (kind, name) = usecases::library_add_source(lib, fetch, &source, std::path::Path::new(&source), &folder)?;
             let at = if folder.is_empty() { String::new() } else { format!(" in {folder}/") };
             println!("✓ added {}/{name}{at}", kind.dir());
         }
@@ -338,6 +354,11 @@ fn library_command(lib: &dyn ports::Library, kits: &dyn ports::KitStore, editor:
             }
         }
         LibraryCmd::Show(what) => print!("{}", usecases::library_show(lib, &what)?),
+        LibraryCmd::Update(which) => {
+            for line in usecases::plugin_update(lib, fetch, which.as_ref())? {
+                println!("  {line}");
+            }
+        }
         LibraryCmd::Edit(what) => {
             usecases::library_edit(lib, editor, &what)?;
             println!("✓ edited {}; every kit using it gets the change", what.line());

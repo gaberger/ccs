@@ -4,13 +4,13 @@
 //! ports as parameters and never picks the adapter.
 
 use crate::domain::{
-    aws_profile_env, ccs_name_for_aws, check_env, compose_status, default_asset_name, default_settings, item_name,
+    aws_profile_env, ccs_name_for_aws, git_source, check_env, compose_status, default_asset_name, default_settings, item_name,
     kit_args, kit_name_for_profile, plan_launch, provider_label, rewrite_folder, render_exports, resolve, resolve_kit, status_segment, with_kits, AwsRow,
     CcsError, Finding, ImportOutcome, Kind, KitContents, KitName, LaunchPlan, LegacyItem, LibItem, LibraryRemoved,
     ListEntry, Overview, Profile, ProfileName, Use, Wrapped,
 };
 use crate::ports::{
-    AwsProfiles, Browser, CommandRunner, Editor, KitStore, Launcher, Legacy, Library, PathInput, PinLocator, ProfileStore,
+    AwsProfiles, Browser, CommandRunner, Editor, Fetcher, KitStore, Launcher, Legacy, Library, PathInput, PinLocator, ProfileStore,
 };
 use std::path::Path;
 
@@ -59,15 +59,27 @@ pub fn prepare_launch(
     let wanted = chosen.unwrap_or_else(|| store.kits(name));
     let names = wanted.iter().map(|k| existing_kit(kits, k)).collect::<Result<Vec<_>, _>>()?;
     let library = library_items(lib);
-    let (mut dirs, mut warnings, mut prompt) = (Vec::new(), Vec::new(), String::new());
+    let (mut dirs, mut plugins, mut warnings, mut prompt) = (Vec::new(), Vec::<LibItem>::new(), Vec::new(), String::new());
     for k in &names {
         let contents = resolve_kit(&kits.uses(k)?, &library);
         warnings.extend(contents.missing.iter().map(|m| format!("kit {}: {m} is not in the library; left out", k.as_str())));
-        dirs.push(kits.build(k, &contents.items)?);
+        // Skills and agents are built into the kit; a picked plugin loads as itself (§15).
+        let (picked, own): (Vec<LibItem>, Vec<LibItem>) = contents.items.into_iter().partition(|i| i.kind == Kind::Plugin);
+        dirs.push(kits.build(k, &own)?);
+        for p in picked {
+            if !plugins.iter().any(|x| x.name == p.name) {
+                plugins.push(p);
+            }
+        }
         if let Some(text) = kits.instructions(k) {
             prompt += &format!("<!-- kit {} -->\n{}\n", k.as_str(), text.trim_end());
         }
     }
+    for p in plugins.iter().filter(|p| names.iter().any(|k| k.as_str() == p.name)) {
+        let n = &p.name;
+        warnings.push(format!("kit {n} and plugin {n} both name their skills {n}:…; rename the kit: ccs kit rename {n} <new>"));
+    }
+    dirs.extend(plugins.into_iter().map(|p| p.source));
     let prompt = if prompt.is_empty() { None } else { Some(kits.write_prompt(&names, &prompt)?) };
     let plan = with_kits(plan_launch(&profile, args), &names, kit_args(&dirs, prompt.as_deref()));
     Ok((plan, warnings))
@@ -401,7 +413,7 @@ pub fn needs_migrate(legacy: &dyn Legacy) -> bool {
 // ── The library and kits (ADR-2610261643) ───────────────────────────────────
 
 fn library_items(lib: &dyn Library) -> Vec<LibItem> {
-    [Kind::Skill, Kind::Agent].into_iter().flat_map(|k| lib.items(k)).collect()
+    [Kind::Skill, Kind::Agent, Kind::Plugin].into_iter().flat_map(|k| lib.items(k)).collect()
 }
 
 /// The item an entry names, by name, wherever its folder is.
@@ -429,10 +441,18 @@ pub fn library_list(lib: &dyn Library, kind: Kind) -> (Vec<LibItem>, Vec<String>
 
 /// Copy a skill folder (or its `SKILL.md`) or an agent `.md` into `folder`.
 /// The kind comes from the source. Names are unique in the library.
-pub fn library_add(lib: &dyn Library, source: &Path, folder: &str) -> Result<(Kind, String), CcsError> {
+fn library_add(lib: &dyn Library, source: &Path, folder: &str) -> Result<(Kind, String), CcsError> {
     let (kind, dir) = lib.classify(source)?;
-    let name = default_asset_name(kind, &dir.to_string_lossy())
-        .ok_or_else(|| CcsError::Usage(format!("cannot name a {} from {}", kind.label(), source.display())))?;
+    let name = if kind == Kind::Plugin {
+        if !folder.is_empty() {
+            return Err(no_folders());
+        }
+        // Claude Code knows a plugin by its manifest name, so the library does too.
+        lib.plugin_name(&dir)?
+    } else {
+        default_asset_name(kind, &dir.to_string_lossy())
+            .ok_or_else(|| CcsError::Usage(format!("cannot name a {} from {}", kind.label(), source.display())))?
+    };
     let name = item_name(kind, &name)?;
     if let Some(i) = lib.items(kind).into_iter().find(|i| i.name == name) {
         return Err(CcsError::AssetExists(format!("{}/{name} (library/{}/{})", kind.dir(), kind.dir(), i.path())));
@@ -441,7 +461,51 @@ pub fn library_add(lib: &dyn Library, source: &Path, folder: &str) -> Result<(Ki
     Ok((kind, name))
 }
 
+/// `ccs library add` and the TUI's `a`: a local path when one exists (`local`
+/// is `raw` expanded), else a git source, cloned and then added like a path.
+pub fn library_add_source(lib: &dyn Library, fetch: &dyn Fetcher, raw: &str, local: &Path, folder: &str) -> Result<(Kind, String), CcsError> {
+    if local.exists() {
+        return library_add(lib, local, folder);
+    }
+    let Some(url) = git_source(raw) else { return library_add(lib, local, folder) };
+    let tmp = fetch.clone_temp(&url)?;
+    let added = library_add(lib, &tmp, folder).map_err(|e| match e {
+        CcsError::Usage(_) if lib.plugin_name(&tmp).is_err() => {
+            CcsError::Usage(format!("{url} is not a plugin: its root has no .claude-plugin/plugin.json"))
+        }
+        e => e,
+    });
+    fetch.discard(&tmp);
+    added
+}
+
+/// `git pull` every plugin, or one. One line per plugin.
+pub fn plugin_update(lib: &dyn Library, fetch: &dyn Fetcher, which: Option<&Use>) -> Result<Vec<String>, CcsError> {
+    let plugins = match which {
+        Some(u) => vec![library_item(lib, u)?],
+        None => lib.items(Kind::Plugin),
+    };
+    if plugins.is_empty() {
+        return Ok(vec!["no plugins in the library; add one with: ccs library add <owner/repo>".into()]);
+    }
+    Ok(plugins
+        .iter()
+        .map(|p| match fetch.pull(&p.source) {
+            Ok(Some(change)) => format!("plugins/{}: {change}", p.name),
+            Ok(None) => format!("plugins/{}: not a git clone; add it again from git to update it", p.name),
+            Err(e) => format!("plugins/{}: {e}", p.name),
+        })
+        .collect())
+}
+
+fn no_folders() -> CcsError {
+    CcsError::Usage("plugins have no folders: a plugin is plugins/<name>".into())
+}
+
 pub fn library_mkdir(lib: &dyn Library, kind: Kind, folder: &str) -> Result<(), CcsError> {
+    if kind == Kind::Plugin {
+        return Err(no_folders());
+    }
     lib.make_folder(kind, folder)
 }
 
@@ -461,6 +525,9 @@ fn rewrite_kits(kits: &dyn KitStore, kind: Kind, from: &str, to: &str) -> Result
 /// changes no kit; a folder move rewrites the kit lines under it.
 pub fn library_move(lib: &dyn Library, kits: &dyn KitStore, what: &Use, to: &str) -> Result<(), CcsError> {
     let kind = what.kind();
+    if kind == Kind::Plugin {
+        return Err(no_folders());
+    }
     let from = match what {
         Use::Item(..) => {
             let item = library_item(lib, what)?;
@@ -489,6 +556,9 @@ pub fn library_move(lib: &dyn Library, kits: &dyn KitStore, what: &Use, to: &str
 
 /// Rename a folder where it is, and the kit lines under it.
 pub fn library_rename_folder(lib: &dyn Library, kits: &dyn KitStore, kind: Kind, folder: &str, name: &str) -> Result<(), CcsError> {
+    if kind == Kind::Plugin {
+        return Err(no_folders());
+    }
     let name = item_name(kind, name).map_err(|_| CcsError::Usage(format!("'{name}' is not a folder name (letters, digits, . _ -)")))?;
     if !lib.folders(kind).iter().any(|f| f == folder) {
         return Err(CcsError::NoAsset(format!("{}/{folder}/ in the library", kind.dir())));
@@ -660,6 +730,7 @@ pub struct App<'a> {
     pub paths: &'a dyn PathInput,
     pub editor: &'a dyn Editor,
     pub aws: &'a dyn AwsProfiles,
+    pub fetch: &'a dyn Fetcher,
     /// This program, for the status line command a new profile gets.
     pub ccs_bin: String,
     pub claude_available: bool,
@@ -718,7 +789,10 @@ impl Browser for App<'_> {
         library_edit(self.lib, self.editor, entry)
     }
     fn add(&self, path: &str, folder: &str) -> Result<(Kind, String), CcsError> {
-        library_add(self.lib, &self.paths.expand(path), folder)
+        library_add_source(self.lib, self.fetch, path, &self.paths.expand(path), folder)
+    }
+    fn update_plugins(&self, which: Option<&str>) -> Result<Vec<String>, CcsError> {
+        plugin_update(self.lib, self.fetch, which.map(|n| Use::Item(Kind::Plugin, n.into())).as_ref())
     }
     fn mkdir(&self, kind: Kind, folder: &str) -> Result<(), CcsError> {
         library_mkdir(self.lib, kind, folder)

@@ -124,7 +124,7 @@ fn the_app_drives_the_real_library_kits_and_profiles_through_the_port() {
     let old = ccs::legacy(&sb.home(), sb.root.join("home/.claude"));
     let (paths, editor) = (sb.paths(), Recorder::default());
     usecases::new_profile(&store, &ProfileName::parse("work").unwrap(), None).unwrap();
-    let app = usecases::App { store: &store, kits: &kits, lib: &lib, legacy: &old, paths: &paths, editor: &editor, aws: &NoAws, ccs_bin: "ccs".into(), claude_available: true, current: None };
+    let app = usecases::App { store: &store, kits: &kits, lib: &lib, legacy: &old, paths: &paths, editor: &editor, aws: &NoAws, fetch: &ccs::fetcher(), ccs_bin: "ccs".into(), claude_available: true, current: None };
     let work = ProfileName::parse("work").unwrap();
 
     // Library: add by typed path into a folder, make and move folders.
@@ -185,7 +185,7 @@ fn the_app_makes_copies_edits_and_imports_profiles_through_the_port() {
     let (store, lib, kits) = (ccs::profile_store(sb.home()), ccs::library(&sb.home()), ccs::kit_store(&sb.home()));
     let old = ccs::legacy(&sb.home(), sb.root.join("home/.claude"));
     let (paths, editor) = (sb.paths(), Recorder::default());
-    let app = usecases::App { store: &store, kits: &kits, lib: &lib, legacy: &old, paths: &paths, editor: &editor, aws: &NoAws, ccs_bin: "/bin/ccs".into(), claude_available: true, current: None };
+    let app = usecases::App { store: &store, kits: &kits, lib: &lib, legacy: &old, paths: &paths, editor: &editor, aws: &NoAws, fetch: &ccs::fetcher(), ccs_bin: "/bin/ccs".into(), claude_available: true, current: None };
     let work = ProfileName::parse("work").unwrap();
 
     app.new_profile("work", None).unwrap();

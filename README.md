@@ -74,14 +74,15 @@ ccs import aws [<p>…] [--all] [--region <r>]
                                list AWS CLI profiles, or import them as Bedrock profiles
 ccs migrate                    convert the shared/ and native layout of earlier versions
 
-ccs library list [skills|agents] | add <path> [--in <folder>] | mkdir skills/<folder>
+ccs library list [skills|agents|plugins] | add <path|owner/repo|git URL> [--in <folder>] | mkdir skills/<folder>
             mv <entry> <folder|/> | rename skills/<folder>/ <name> | rm <entry> | show <entry> | edit <entry>
+            update [plugins/<name>]
 ccs kit     list | new <k> | rm <k> | show <k> | edit <k> | rename <k> <new> | use <k> <entry>… | drop <k> <entry>…
             attach <k> <profile> | detach <k> <profile>
 ```
 
-An **entry** is `skills/<name>`, `agents/<name>`, or a folder such as
-`skills/net/` (everything under it, including what you add later).
+An **entry** is `skills/<name>`, `agents/<name>`, `plugins/<name>`, or a folder
+such as `skills/net/` (everything under it, including what you add later).
 
 **The launch screen.** A bare `ccs` in a terminal shows your profiles with
 their provider (`bedrock claude-bedrock@us-east-1`, `anthropic`) and every kit
@@ -112,6 +113,21 @@ A name is unique in the library, whatever its folder, because Claude Code
 knows a skill by its name and a kit picks items by name: moving an item
 between folders changes no kit.
 
+**Plugins.** A whole Claude Code plugin can live in the library too, so a kit
+can bring it to every profile instead of installing it into one:
+
+```bash
+ccs library add google/elephant-goldfish-model   # cloned from GitHub; any git URL or local folder works
+ccs kit use dev plugins/egm                      # every profile with kit dev gets egm:egm_review, …
+ccs library update                               # git pull every plugin (or: update plugins/egm)
+```
+
+A plugin keeps its manifest name (`egm`, not the repository name) and its
+skill prefix (`egm:`). It is loaded as it is, with one more `--plugin-dir`;
+nothing is built. A local path wins over reading the source as `owner/repo`.
+The repository root must be the plugin: a marketplace whose plugins live in
+subfolders is not supported yet.
+
 **Kits.** `ccs kit use net skills/net/ agents/rev` picks from the library;
 `ccs kit edit net` writes the kit's instructions. At launch, each kit is
 rebuilt into `~/.claude-profiles/.build/<kit>/` as a plugin: skills are links
@@ -131,15 +147,16 @@ too.
                                 n new (also on an empty section) · c copy (variables, kits, settings;
                                 never the login) · e edit profile.env · d default
                                 Kits tab: space attaches a kit
-2 Kits      Skills · Agents · CLAUDE.md · Profiles
+2 Kits      Skills · Agents · Plugins · CLAUDE.md · Profiles
                                 n new kit · r rename · x delete (asks y/n)
                                 space pick: [x] picked, [·] picked by a folder above, [ ] not
                                 p show only what it picks · e edit (an item, or the kit's CLAUDE.md) · v view
                                 Profiles tab: space attaches the kit to a profile
-3 Library   skills · agents     space mark (●) · m move to a folder · + add to a kit (both pick from
+3 Library   skills · agents ·   space mark (●) · m move to a folder · + add to a kit (both pick from
                                 a list; type to filter, or type a new name) · x delete (asks y/n)
                                 a add from a path (Tab completes) · n new folder · r rename a folder
                                 e edit · v view · each row shows the kits that pick it: ‹network›
+            plugins             a add (owner/repo, a git URL, a path) · u update (all, from the list)
 everywhere  i import: ~/.claude, an AWS profile, every AWS profile, or migrate an old layout
             ↑↓ move · PgUp/PgDn a page · Home/End (g/G) first/last · mouse wheel
             ←→ tab · tab focus · / search · q quit
@@ -201,6 +218,7 @@ src/
   adapters/secondary/fs_paths.rs       — paths typed into the TUI
   adapters/secondary/fs_pins.rs        — finds .claude-profile
   adapters/secondary/exec_launcher.rs  — replaces the process with claude
+  adapters/secondary/git_fetcher.rs    — clones and pulls plugins with git
   adapters/secondary/process_editor.rs — opens $VISUAL / $EDITOR
   adapters/secondary/process_runner.rs — runs a wrapped status line command
   adapters/secondary/aws_cli.rs        — AWS profile names and regions, via the aws CLI
@@ -240,4 +258,5 @@ the TUI (a primary adapter) imports `ports/` only.
 | `CCS_PROFILE` | Selects a profile when no argument or pin file does. |
 | `CCS_CLAUDE_BIN` | Program to launch instead of `claude`. The tests use a script that prints its arguments. |
 | `CCS_AWS_BIN` | Program to run instead of `aws`. The tests use a fake. |
+| `CCS_GIT_BIN` | Program to run instead of `git`, for plugins. |
 | `VISUAL`, `EDITOR` | The editor `edit` and the TUI's `e` open. Default `vi`. |

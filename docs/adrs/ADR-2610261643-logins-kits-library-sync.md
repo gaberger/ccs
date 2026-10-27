@@ -308,6 +308,61 @@ what it saw: `pwd` was `ccs/zed`, with `CCS_PROFILE=zed`, `AWS_PROFILE=sso` and
 `CLAUDE_CONFIG_DIR=ccs/zed/config`. The same run at 30 columns found the cut-off
 body that §13's narrow layout fixes.
 
+### 15. Plugins in the library; kits pick them (decided 2026-10-27, before its code)
+
+The user, on google/elephant-goldfish-model, installed as a marketplace plugin
+in the stock `~/.claude` only: "we should enable that". A plugin installed
+with `claude plugin install` belongs to one config dir, so to one profile.
+Kits are the way one thing reaches many profiles.
+
+Measured first (2026-10-27): a plain `git clone` of the repository, passed as
+`--plugin-dir`, loads all 7 egm skills and 9 agents, named as the marketplace
+install names them (`egm:egm_review`, `egm:egm-design`), version 0.1.0. A
+profile with no plugins was used, so nothing came from elsewhere.
+
+- **A third library kind, `plugins`.** `library/plugins/<name>/` is a whole
+  plugin: a folder whose `.claude-plugin/plugin.json` names it. `<name>` is
+  that manifest name. Plugins have no folders.
+- **Adding.** `ccs library add <source>`: a local path is classified as before,
+  and a folder with `.claude-plugin/plugin.json` is a plugin, copied in. A
+  source that is not a local path but reads as `owner/repo`, an `https://` or
+  `git@` URL, or ends in `.git` is cloned with git, then copied in with its
+  `.git`. A local path wins over the `owner/repo` reading.
+- **Kits.** The entry is `plugins/<name>`, picked like an item. At launch each
+  picked plugin's folder is one more `--plugin-dir`, once per launch, after the
+  kits' own. Nothing is built or copied at launch.
+- **Updating.** `ccs library update [plugins/<name>]` runs `git pull
+  --ff-only` in each plugin that is a clone, and says which are not.
+- **Removing** is `ccs library rm plugins/<name>`, to the trash, naming the kits
+  that used it, as for any entry.
+- **The TUI.** Library gets a `plugins` row; a kit gets a Plugins tab after
+  Agents, with the same `[x]` ticks; `a` there takes a source, `u` updates.
+- **Clash.** A kit and a plugin with the same name both claim the skill prefix
+  `<name>:`. The launch warns when one launch loads both.
+- **Not done.** A marketplace whose plugins live in subfolders: the clone root
+  must be the plugin, else the add says so. `ccs import` does not bring
+  marketplace installs from `~/.claude`.
+- **No new top-level word.** `ccs plugin …` is not taken, because a bare
+  `ccs plugin …` already passes through to `claude plugin …` on the resolved
+  profile.
+
+Gate: `cargo test && hexa analyze . --grade A+ --exit-code`, plus a real launch
+of a kit holding the egm clone whose init event lists `egm:egm_review`.
+
+§15 **done** (tests: `tests/plugins.rs`, 12, with local git repositories for
+GitHub; 3 in `tests/tui.rs`). A `file://` URL also reads as git, for those
+tests and for local mirrors. Injected bugs, each caught: a plugin loaded twice;
+plugins before the kits; a nested `name` taken for the manifest's; `a/b/c` read
+as GitHub; no clash warning; `update plugins/egm` pulling every plugin; a
+plugin put in a folder; git asked first for a local `vendor/egm`; `u` on one
+plugin updating all. Three of those were missed at first, by tests too weak to
+tell the bug from the code (one plugin, one JSON shape, no two-part local
+path); the tests were strengthened. Found too: the bug harness took a syntax
+error for a missed bug; it now checks that the tests ran. Real run
+(2026-10-27): `ccs library add google/elephant-goldfish-model` cloned
+`b3a3595`; kit `dev` picked `plugins/egm`; `ccs probe -p …` loaded all 7
+`egm:` skills and 9 agents from `library/plugins/egm`, next to `.build/dev`.
+
 ## Consequences
 
 - Skills from a kit are named `<kit>:<skill>` in Claude Code. A skill invoked

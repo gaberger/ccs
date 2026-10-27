@@ -56,6 +56,7 @@ impl Fake {
                 item(Kind::Skill, "net", "inspect-edge"),
                 item(Kind::Skill, "net/nqe", "find-nqe-query"),
                 item(Kind::Agent, "hex", "rev"),
+                item(Kind::Plugin, "", "egm"),
             ]),
             folders: RefCell::new(vec![(Kind::Skill, "net".into()), (Kind::Skill, "net/nqe".into()), (Kind::Agent, "hex".into())]),
             calls: RefCell::new(vec![]),
@@ -222,6 +223,10 @@ impl Browser for Fake {
     }
     fn complete_path(&self, typed: &str) -> Vec<String> {
         ["~/skills/", "~/src/a/", "~/src/b/", "~/notes.md"].iter().filter(|c| c.starts_with(typed)).map(|c| c.to_string()).collect()
+    }
+    fn update_plugins(&self, which: Option<&str>) -> Result<Vec<String>, CcsError> {
+        self.log(format!("update_plugins {}", which.unwrap_or("*")));
+        Ok(vec!["plugins/egm: up to date at 3d0b348".into()])
     }
     fn new_profile(&self, n: &str, from: Option<&ProfileName>) -> Result<(), CcsError> {
         if ProfileName::parse(n).is_err() {
@@ -439,7 +444,7 @@ fn space_picks_an_item_or_a_folder_and_explains_a_pick_from_above() {
 fn a_kit_claude_md_tab_shows_the_instructions_and_e_edits_them() {
     let b = Fake::new();
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Char('2'), Down, Right, Right]);
+    press(&mut s, &b, &[Char('2'), Down, Right, Right, Right]);
     assert!(screen(&s).contains("NET RULES"), "{}", screen(&s));
     press(&mut s, &b, &[Char('e')]);
     assert!(s.wants_editor());
@@ -448,7 +453,7 @@ fn a_kit_claude_md_tab_shows_the_instructions_and_e_edits_them() {
     assert_eq!(b.called(), ["edit_kit net"]);
     // A kit with no instructions says how to start them.
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Char('2'), Right, Right]);
+    press(&mut s, &b, &[Char('2'), Right, Right, Right]);
     assert!(screen(&s).contains("e writes"), "{}", screen(&s));
 }
 
@@ -702,7 +707,7 @@ fn r_renames_a_folder_or_a_kit() {
 fn a_kit_attaches_to_profiles_from_its_profiles_tab() {
     let b = Fake::new();
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Char('2'), Down, Right, Right, Right, Tab]);
+    press(&mut s, &b, &[Char('2'), Down, Right, Right, Right, Right, Tab]);
     let out = screen(&s);
     assert!(out.contains("[ ] lab") && out.contains("[x] work"), "{out}");
     press(&mut s, &b, &[Char(' ')]);
@@ -1162,4 +1167,40 @@ fn a_narrow_launch_screen_stacks_providers_over_kits() {
     let out = t.backend().buffer().content().chunks(30).map(|row| row.iter().map(|c| c.symbol()).collect::<String>()).collect::<Vec<_>>().join("\n");
     let line = |t: &str| out.lines().position(|l| l.contains(t)).unwrap_or_else(|| panic!("no {t}:\n{out}"));
     assert!(line("▶ work") < line("[x] net"), "kits on a line under the providers:\n{out}");
+}
+
+// ── Plugins (ADR-2610261643 §15) ─────────────────────────────────────────────
+
+#[test]
+fn the_library_lists_plugins_and_u_updates_them() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('3'), Down, Down]);
+    let out = screen(&s);
+    assert!(out.contains("▶ plugins") && out.contains("Plugins (1)") && out.contains("egm"), "{out}");
+    press(&mut s, &b, &[Char('u')]);
+    assert_eq!(b.called(), ["update_plugins *"], "from the list: every plugin");
+    assert!(screen(&s).contains("plugins/egm: up to date"), "{}", screen(&s));
+    press(&mut s, &b, &[Esc, Tab, Char('u')]);
+    assert_eq!(b.called().last().unwrap(), "update_plugins egm", "on a plugin: that one");
+}
+
+#[test]
+fn a_on_plugins_asks_for_a_git_source() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('3'), Down, Down, Tab, Char('a')]);
+    assert!(screen(&s).contains("owner/repo"), "{}", screen(&s));
+}
+
+#[test]
+fn a_kit_picks_a_plugin_on_its_plugins_tab() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('2'), Down, Right, Right]);
+    let out = screen(&s);
+    assert!(out.contains("Plugins (0)") && line_with(&out, "egm").contains("[ ]"), "{out}");
+    press(&mut s, &b, &[Tab, Char(' ')]);
+    assert_eq!(b.called(), ["set_use net plugins/egm true"]);
+    assert!(line_with(&screen(&s), "egm").contains("[x]"), "{}", screen(&s));
 }

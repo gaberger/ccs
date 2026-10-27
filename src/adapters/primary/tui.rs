@@ -150,6 +150,9 @@ enum Section {
     Library,
 }
 
+/// Every kind of library entry, in the order the TUI shows them.
+const KINDS: [ItemKind; 3] = [ItemKind::Skill, ItemKind::Agent, ItemKind::Plugin];
+
 const SECTIONS: [Section; 3] = [Section::Profiles, Section::Kits, Section::Library];
 
 impl Section {
@@ -180,6 +183,7 @@ enum Tab {
     Kits,
     Skills,
     Agents,
+    Plugins,
     Instructions,
     Profiles,
 }
@@ -191,6 +195,7 @@ impl Tab {
             Tab::Kits => "Kits",
             Tab::Skills => "Skills",
             Tab::Agents => "Agents",
+            Tab::Plugins => "Plugins",
             Tab::Instructions => "CLAUDE.md",
             Tab::Profiles => "Profiles",
         }
@@ -200,6 +205,7 @@ impl Tab {
         match self {
             Tab::Skills => Some(ItemKind::Skill),
             Tab::Agents => Some(ItemKind::Agent),
+            Tab::Plugins => Some(ItemKind::Plugin),
             _ => None,
         }
     }
@@ -210,9 +216,10 @@ fn tabs(row: &Row) -> &'static [Tab] {
         Row::Profile(_) => &[Tab::Overview, Tab::Kits],
         Row::ProfilesHeading => &[Tab::Overview],
         Row::KitsHeading => &[Tab::Kits],
-        Row::Kit(_) => &[Tab::Skills, Tab::Agents, Tab::Instructions, Tab::Profiles],
+        Row::Kit(_) => &[Tab::Skills, Tab::Agents, Tab::Plugins, Tab::Instructions, Tab::Profiles],
         Row::Library(ItemKind::Skill) => &[Tab::Skills],
         Row::Library(ItemKind::Agent) => &[Tab::Agents],
+        Row::Library(ItemKind::Plugin) => &[Tab::Plugins],
     }
 }
 
@@ -346,7 +353,7 @@ pub struct State {
     /// The library tree for the tab's kind.
     tree: Vec<TreeRow>,
     /// Item counts per kind: the library's, or what the selected kit picks.
-    counts: [usize; 2],
+    counts: [usize; 3],
     /// Every kit's `uses`, for the labels on library rows.
     all_uses: Vec<(String, Vec<Entry>)>,
     /// Marked library rows, by path, for `m`, `k` and `x`.
@@ -382,7 +389,7 @@ impl State {
             body_filter: String::new(),
             overview: None,
             tree: vec![],
-            counts: [0, 0],
+            counts: [0; 3],
             all_uses: vec![],
             marks: BTreeSet::new(),
             picked_only: false,
@@ -410,7 +417,7 @@ impl State {
         let rows: Vec<Row> = match self.section {
             Section::Profiles => self.profiles.iter().filter(|p| matches(f, p.name.as_str())).map(|p| Row::Profile(p.name.clone())).collect(),
             Section::Kits => self.kits.iter().filter(|k| matches(f, k)).map(|k| Row::Kit(k.clone())).collect(),
-            Section::Library => vec![Row::Library(ItemKind::Skill), Row::Library(ItemKind::Agent)],
+            Section::Library => KINDS.iter().map(|k| Row::Library(*k)).collect(),
         };
         if !rows.is_empty() {
             return rows;
@@ -439,7 +446,7 @@ impl State {
 
     /// Whether the body is a list the cursor can move in.
     fn body_is_list(&self) -> bool {
-        matches!(self.tab(), Tab::Skills | Tab::Agents | Tab::Profiles) || (self.tab() == Tab::Kits && matches!(self.row(), Row::Profile(_)))
+        matches!(self.tab(), Tab::Skills | Tab::Agents | Tab::Plugins | Tab::Profiles) || (self.tab() == Tab::Kits && matches!(self.row(), Row::Profile(_)))
     }
 
     /// Tree rows matching the body filter, with the folders above each match.
@@ -481,7 +488,7 @@ impl State {
 
     fn body_len(&self) -> usize {
         match self.tab() {
-            Tab::Skills | Tab::Agents => self.visible_tree().len(),
+            Tab::Skills | Tab::Agents | Tab::Plugins => self.visible_tree().len(),
             Tab::Kits => self.kits.len(),
             Tab::Profiles => self.profiles.len(),
             _ => 0,
@@ -503,7 +510,7 @@ impl State {
             _ => (vec![], None),
         };
         self.all_uses = self.kits.iter().map(|k| (k.clone(), b.kit_uses(k).unwrap_or_default())).collect();
-        let mut trees = [ItemKind::Skill, ItemKind::Agent].map(|kind| {
+        let mut trees = KINDS.map(|kind| {
             let (items, folders) = b.library(kind);
             (kind, library_tree(&items, &folders))
         });
@@ -514,9 +521,8 @@ impl State {
                 _ => items.count(),
             };
         }
-        self.tree = match self.tab().kind() {
-            Some(ItemKind::Skill) => std::mem::take(&mut trees[0].1),
-            Some(ItemKind::Agent) => std::mem::take(&mut trees[1].1),
+        self.tree = match self.tab().kind().and_then(|k| KINDS.iter().position(|x| *x == k)) {
+            Some(i) => std::mem::take(&mut trees[i].1),
             None => vec![],
         };
         self.body_sel = self.body_sel.min(self.body_len().saturating_sub(1));
@@ -724,6 +730,7 @@ impl State {
             Key::Char('m') => self.ask_move(),
             Key::Char('x') => self.ask_delete(),
             Key::Char('+') => self.ask_kit(),
+            Key::Char('u') => self.update_plugins(b),
             Key::Char('r') => self.ask_rename(),
             Key::Char('p') if self.focus == Focus::Body && matches!(self.row(), Row::Kit(_)) => {
                 self.picked_only = !self.picked_only;
@@ -885,6 +892,19 @@ impl State {
 
     fn input(&mut self, purpose: Purpose) {
         self.mode = Mode::Input { purpose, text: String::new(), candidates: vec![] };
+    }
+
+    /// `u` on plugins: `git pull` the highlighted plugin, or every plugin from the list.
+    fn update_plugins(&mut self, b: &dyn Browser) {
+        if self.row() != Row::Library(ItemKind::Plugin) {
+            return;
+        }
+        let one = (self.focus == Focus::Body).then(|| self.tree_row().and_then(|r| r.item.map(|i| i.name))).flatten();
+        match b.update_plugins(one.as_deref()) {
+            Ok(lines) => self.mode = Mode::View { title: "update plugins".into(), text: lines.join("\n"), scroll: 0 },
+            Err(e) => self.message = Some(e.to_string()),
+        }
+        self.refresh(b);
     }
 
     fn ask_add(&mut self) {
@@ -1114,7 +1134,9 @@ impl State {
             (Focus::List, Row::KitsHeading, _) => "n new kit · i import · 1 2 3 section · q quit",
             (Focus::List, Row::Kit(_), Tab::Instructions) => "↑↓ move · ←→ tab · e edit · n new kit · r rename · x delete kit · 1 2 3 section · q quit",
             (Focus::List, Row::Kit(_), _) => "↑↓ move · ←→ tab · tab focus · n new kit · r rename · x delete kit · 1 2 3 section · q quit",
+            (Focus::List, Row::Library(ItemKind::Plugin), _) => "1 2 3 section · ↑↓ move · tab focus · u update all · i import · q quit",
             (Focus::List, Row::Library(_), _) => "1 2 3 section · ↑↓ move · tab focus · i import · q quit",
+            (Focus::Body, Row::Library(ItemKind::Plugin), _) => "a add (owner/repo) · u update · + to kit · x delete · v view · / search · tab back",
             (Focus::Body, Row::Profile(_), _) => "space attach · ↑↓ move · tab back · q quit",
             (Focus::Body, Row::Kit(_), Tab::Profiles) => "space attach · ↑↓ move · tab back · q quit",
             (Focus::Body, Row::Kit(_), _) => "space pick · p picked only · e edit · v view · / search · tab back",
@@ -1204,6 +1226,7 @@ pub fn draw(frame: &mut Frame, state: &State) {
         .map(|t| match t {
             Tab::Skills => format!("Skills ({})", state.counts[0]),
             Tab::Agents => format!("Agents ({})", state.counts[1]),
+            Tab::Plugins => format!("Plugins ({})", state.counts[2]),
             t => t.title().to_string(),
         })
         .collect();
@@ -1216,6 +1239,9 @@ pub fn draw(frame: &mut Frame, state: &State) {
     let kind = state.tab().kind().unwrap_or(ItemKind::Skill);
     let text = match &state.mode {
         Mode::Input { purpose, text, .. } => match purpose {
+            Purpose::Add { .. } if kind == ItemKind::Plugin => {
+                format!("Add a plugin (owner/repo, a git URL, or a path): {text}▏  enter add · esc cancel")
+            }
             Purpose::Add { folder } => {
                 format!("Add to the library into {}: {text}▏  tab complete · enter add · esc cancel", folder_label(kind, folder))
             }
@@ -1453,7 +1479,7 @@ pub struct Picker {
 impl Picker {
     /// `preselect` is the resolved profile, when there is one.
     pub fn new(b: &dyn Browser, preselect: Option<&str>) -> Picker {
-        let trees = [ItemKind::Skill, ItemKind::Agent].map(|kind| {
+        let trees = KINDS.map(|kind| {
             let (items, folders) = b.library(kind);
             (kind, library_tree(&items, &folders))
         });

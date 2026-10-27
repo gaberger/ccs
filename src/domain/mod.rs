@@ -238,6 +238,8 @@ fn launch_with_kits(profile: Option<String>, rest: &[String]) -> Command {
 pub enum Kind {
     Skill,
     Agent,
+    /// A whole Claude Code plugin, loaded with `--plugin-dir` (ADR-2610261643 §15).
+    Plugin,
 }
 
 impl Kind {
@@ -245,6 +247,7 @@ impl Kind {
         match self {
             Kind::Skill => "skill",
             Kind::Agent => "agent",
+            Kind::Plugin => "plugin",
         }
     }
 
@@ -253,6 +256,7 @@ impl Kind {
         match self {
             Kind::Skill => "skills",
             Kind::Agent => "agents",
+            Kind::Plugin => "plugins",
         }
     }
 }
@@ -387,12 +391,16 @@ pub enum Use {
 
 impl Use {
     pub fn parse(s: &str) -> Result<Use, CcsError> {
-        let bad = || CcsError::Usage(format!("'{s}' is not a library entry: skills/<name>, agents/<name>, or a folder like skills/net/"));
+        let bad = || CcsError::Usage(format!("'{s}' is not a library entry: skills/<name>, agents/<name>, plugins/<name>, or a folder like skills/net/"));
         let (kind, rest) = match s.split_once('/') {
             Some(("skills", r)) => (Kind::Skill, r),
             Some(("agents", r)) => (Kind::Agent, r),
+            Some(("plugins", r)) => (Kind::Plugin, r),
             _ => return Err(bad()),
         };
+        if kind == Kind::Plugin && rest.contains('/') {
+            return Err(CcsError::Usage(format!("'{s}': plugins have no folders; a plugin is plugins/<name>")));
+        }
         match rest.strip_suffix('/') {
             Some(folder) if folder_ok(folder) => Ok(Use::Folder(kind, folder.into())),
             None if segment_ok(rest) => Ok(Use::Item(kind, rest.into())),
@@ -411,6 +419,67 @@ impl Use {
             Use::Folder(k, f) => format!("{}/{f}/", k.dir()),
             Use::Item(k, n) => format!("{}/{n}", k.dir()),
         }
+    }
+}
+
+/// A top-level string field of a JSON object, such as `plugin.json`'s `name`.
+/// Nested objects and lists are skipped, so `author.name` is never taken for it.
+/// Enough JSON for a manifest; anything it cannot read is `None`.
+pub fn manifest_field(json: &str, key: &str) -> Option<String> {
+    let mut chars = json.trim_start().strip_prefix('{')?.chars().peekable();
+    let read_string = |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<String> {
+        let mut out = String::new();
+        loop {
+            match chars.next()? {
+                '"' => return Some(out),
+                '\\' => match chars.next()? {
+                    'n' => out.push('\n'),
+                    't' => out.push('\t'),
+                    'u' => {
+                        let hex: String = chars.by_ref().take(4).collect();
+                        out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+                    }
+                    c => out.push(c),
+                },
+                c => out.push(c),
+            }
+        }
+    };
+    let (mut depth, mut want_key, mut current) = (0usize, true, None::<String>);
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                let text = read_string(&mut chars)?;
+                if depth == 0 && want_key {
+                    current = Some(text);
+                } else if depth == 0 && current.as_deref() == Some(key) {
+                    return Some(text);
+                }
+            }
+            ':' if depth == 0 => want_key = false,
+            ',' if depth == 0 => {
+                want_key = true;
+                current = None;
+            }
+            '{' | '[' => depth += 1,
+            '}' | ']' if depth == 0 => return None,
+            '}' | ']' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The git URL a typed source stands for, when it reads as one: `owner/repo`
+/// (GitHub), an `https://`, `git@` or `file://` URL, or anything ending in `.git`.
+/// The caller tries a local path first; this only reads the text.
+pub fn git_source(s: &str) -> Option<String> {
+    if ["https://", "http://", "git@", "file://", "ssh://"].iter().any(|p| s.starts_with(p)) || s.ends_with(".git") {
+        return Some(s.to_string());
+    }
+    match s.split('/').collect::<Vec<_>>().as_slice() {
+        [owner, repo] if segment_ok(owner) && segment_ok(repo) => Some(format!("https://github.com/{s}.git")),
+        _ => None,
     }
 }
 
@@ -666,6 +735,8 @@ pub enum LibraryCmd {
     Remove(Use),
     Show(Use),
     Edit(Use),
+    /// `git pull` one plugin, or every plugin.
+    Update(Option<Use>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -683,8 +754,8 @@ pub enum KitCmd {
     Detach { kit: String, profile: String },
 }
 
-const LIBRARY_USAGE: &str = "ccs library list [skills|agents] | add <path> [--in <folder>] | mkdir skills/<folder> | mv <entry> <folder|/> | rename skills/<folder>/ <name> | rm <entry> | show <entry> | edit <entry>
-  an entry is skills/<name>, agents/<name>, or a folder like skills/net/";
+const LIBRARY_USAGE: &str = "ccs library list [skills|agents|plugins] | add <path|owner/repo|git-url> [--in <folder>] | mkdir skills/<folder> | mv <entry> <folder|/> | rename skills/<folder>/ <name> | rm <entry> | show <entry> | edit <entry> | update [plugins/<name>]
+  an entry is skills/<name>, agents/<name>, plugins/<name>, or a folder like skills/net/";
 const KIT_USAGE: &str =
     "ccs kit list | new <kit> | rm <kit> | show <kit> | edit <kit> | rename <kit> <new> | use <kit> <entry>… | drop <kit> <entry>… | attach <kit> <profile> | detach <kit> <profile>";
 
@@ -706,6 +777,12 @@ fn parse_library(rest: &[String]) -> Result<Command, CcsError> {
         ["list" | "ls"] => LibraryCmd::List(None),
         ["list" | "ls", "skills"] => LibraryCmd::List(Some(Kind::Skill)),
         ["list" | "ls", "agents"] => LibraryCmd::List(Some(Kind::Agent)),
+        ["list" | "ls", "plugins"] => LibraryCmd::List(Some(Kind::Plugin)),
+        ["update" | "pull"] => LibraryCmd::Update(None),
+        ["update" | "pull", what] => match entry(what)? {
+            u @ Use::Item(Kind::Plugin, _) => LibraryCmd::Update(Some(u)),
+            _ => return Err(CcsError::Usage("ccs library update [plugins/<name>]: only a plugin updates".into())),
+        },
         ["add", src] => LibraryCmd::Add { source: src.to_string(), folder: String::new() },
         ["add", src, "--in", f] => LibraryCmd::Add { source: src.to_string(), folder: dest_folder(f)? },
         ["mkdir", f] => match entry(&format!("{}/", f.trim_end_matches('/')))? {

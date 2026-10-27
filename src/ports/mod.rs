@@ -11,7 +11,7 @@ use crate::domain::{
 
 /// Re-exported so an adapter needs to import nothing but this module (rule 4).
 pub use crate::domain::{
-    front_matter_description, AwsRow as AwsProfileRow, ImportOutcome as AwsImport, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
+    front_matter_description, manifest_field, AwsRow as AwsProfileRow, ImportOutcome as AwsImport, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
     Kind as ItemKind, KitName as Kit, LaunchPlan as Plan, LegacyItem as OldItem, LegacyLayout as OldLayout,
     LegacyProfile as OldProfile, LibItem as LibraryItem, LibraryRemoved as Removed, ListEntry as ProfileRow,
     Overview as ProfileOverview, Pick, Profile as LoadedProfile, ProfileName as Name, TreeRow, Use as Entry,
@@ -54,7 +54,9 @@ pub trait Library {
     /// Copy a skill folder or agent file in as `folder/name`, making the folder.
     fn add(&self, kind: Kind, folder: &str, name: &str, source: &std::path::Path) -> Result<(), CcsError>;
     fn make_folder(&self, kind: Kind, folder: &str) -> Result<(), CcsError>;
-    /// The item's main file: a skill's `SKILL.md`, an agent's `.md`.
+    /// A plugin folder's manifest name, from `.claude-plugin/plugin.json`.
+    fn plugin_name(&self, dir: &std::path::Path) -> Result<String, CcsError>;
+    /// The item's main file: a skill's `SKILL.md`, an agent's `.md`, a plugin's `plugin.json`.
     fn main_file(&self, item: &LibItem) -> std::path::PathBuf;
     fn read(&self, item: &LibItem) -> Result<String, CcsError>;
     /// Move an item (`folder/name`) or a folder into `to` (`""` is the top), making `to`.
@@ -85,6 +87,16 @@ pub trait KitStore {
     fn build(&self, kit: &KitName, items: &[LibItem]) -> Result<std::path::PathBuf, CcsError>;
     /// Write one launch's joined instructions. Returns the file.
     fn write_prompt(&self, kits: &[KitName], text: &str) -> Result<std::path::PathBuf, CcsError>;
+}
+
+/// Gets plugins from git (ADR-2610261643 §15).
+pub trait Fetcher {
+    /// Clone `url` into a new temporary folder. Returns the folder.
+    fn clone_temp(&self, url: &str) -> Result<std::path::PathBuf, CcsError>;
+    /// Remove a folder `clone_temp` made.
+    fn discard(&self, dir: &std::path::Path);
+    /// `git pull --ff-only` in `dir`: what changed, or `None` when `dir` is not a clone.
+    fn pull(&self, dir: &std::path::Path) -> Result<Option<String>, CcsError>;
 }
 
 /// What earlier versions left, and the stock `~/.claude` (ADR-2610261643 §5).
@@ -159,8 +171,11 @@ pub trait Browser {
     fn read(&self, entry: &Use) -> Result<String, CcsError>;
     /// Open an item's main file in the editor. The caller hands over the terminal first.
     fn edit(&self, entry: &Use) -> Result<(), CcsError>;
-    /// Copy in the file or folder at a typed path, into `folder`.
+    /// Copy in the file or folder at a typed path, into `folder`; or clone a plugin
+    /// from a typed git source (`owner/repo`, a URL).
     fn add(&self, path: &str, folder: &str) -> Result<(Kind, String), CcsError>;
+    /// `git pull` one plugin by name, or every plugin. One line each.
+    fn update_plugins(&self, which: Option<&str>) -> Result<Vec<String>, CcsError>;
     fn mkdir(&self, kind: Kind, folder: &str) -> Result<(), CcsError>;
     fn move_entry(&self, entry: &Use, to: &str) -> Result<(), CcsError>;
     fn rename_folder(&self, kind: Kind, folder: &str, name: &str) -> Result<(), CcsError>;

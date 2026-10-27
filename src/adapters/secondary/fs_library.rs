@@ -1,10 +1,11 @@
 //! The library as directories under `$CCS_HOME/library` (ADR-2610261643).
 //!
-//! `skills/<folders…>/<skill>/SKILL.md` and `agents/<folders…>/<agent>.md`.
+//! `skills/<folders…>/<skill>/SKILL.md`, `agents/<folders…>/<agent>.md`, and
+//! `plugins/<plugin>/.claude-plugin/plugin.json` (no folders).
 //! A skill folder is any directory holding `SKILL.md`; every other directory is
 //! a folder. Removing moves to the trash; nothing is erased.
 
-use crate::ports::{front_matter_description, Error, ItemKind, Library, LibraryItem};
+use crate::ports::{front_matter_description, manifest_field, Error, ItemKind, Library, LibraryItem};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ impl FsLibrary {
     }
 
     fn base(&self, kind: ItemKind) -> PathBuf {
-        self.root.join(if kind == ItemKind::Skill { "skills" } else { "agents" })
+        self.root.join(kind.dir())
     }
 
     /// Where an item or folder path lives. An agent item is its `.md` file.
@@ -53,6 +54,12 @@ impl FsLibrary {
                 source: p.clone(),
             };
             match kind {
+                ItemKind::Plugin => {
+                    let manifest = p.join(MANIFEST);
+                    if let Ok(text) = fs::read_to_string(&manifest) {
+                        items.push(LibraryItem { description: manifest_field(&text, "description"), ..item(file, &manifest) });
+                    }
+                }
                 ItemKind::Skill if p.join("SKILL.md").is_file() => items.push(item(file, &p.join("SKILL.md"))),
                 ItemKind::Agent if p.is_file() => {
                     if let Some(stem) = file.strip_suffix(".md") {
@@ -76,6 +83,9 @@ impl FsLibrary {
         (items, folders)
     }
 }
+
+/// Where a plugin keeps its manifest.
+const MANIFEST: &str = ".claude-plugin/plugin.json";
 
 fn io_err(path: &Path) -> impl Fn(io::Error) -> Error + '_ {
     move |e| Error::Io(format!("{}: {e}", path.display()))
@@ -106,35 +116,46 @@ impl Library for FsLibrary {
 
     fn add(&self, kind: ItemKind, folder: &str, name: &str, source: &Path) -> Result<(), Error> {
         let dir = self.base(kind).join(folder);
-        let dst = if kind == ItemKind::Skill { dir.join(name) } else { dir.join(format!("{name}.md")) };
+        let dst = if kind == ItemKind::Agent { dir.join(format!("{name}.md")) } else { dir.join(name) };
         if dst.exists() || dst.is_symlink() {
             return Err(Error::AssetExists(dst.display().to_string()));
         }
         fs::create_dir_all(&dir).map_err(io_err(&dir))?;
         match kind {
-            ItemKind::Skill => copy_dir(source, &dst),
-            _ => fs::copy(source, &dst).map(|_| ()),
+            ItemKind::Agent => fs::copy(source, &dst).map(|_| ()),
+            _ => copy_dir(source, &dst),
         }
         .map_err(io_err(&dst))
     }
 
     fn classify(&self, source: &Path) -> Result<(ItemKind, PathBuf), Error> {
-        if source.join("SKILL.md").is_file() {
+        if source.join(MANIFEST).is_file() {
+            Ok((ItemKind::Plugin, source.to_path_buf()))
+        } else if source.join("SKILL.md").is_file() {
             Ok((ItemKind::Skill, source.to_path_buf()))
         } else if source.file_name().is_some_and(|f| f == "SKILL.md") && source.is_file() {
             Ok((ItemKind::Skill, source.parent().unwrap_or(source).to_path_buf()))
         } else if source.extension().is_some_and(|e| e == "md") && source.is_file() {
             Ok((ItemKind::Agent, source.to_path_buf()))
         } else {
-            Err(Error::Usage(format!("{} is neither a folder holding SKILL.md nor an agent .md file", source.display())))
+            Err(Error::Usage(format!(
+                "{} is not a skill folder (SKILL.md), an agent .md file, or a plugin ({MANIFEST})",
+                source.display()
+            )))
         }
     }
 
+    fn plugin_name(&self, dir: &Path) -> Result<String, Error> {
+        let p = dir.join(MANIFEST);
+        let text = fs::read_to_string(&p).map_err(|_| Error::Usage(format!("{} has no {MANIFEST}: it is not a plugin", dir.display())))?;
+        manifest_field(&text, "name").ok_or_else(|| Error::Usage(format!("{} has no name", p.display())))
+    }
+
     fn main_file(&self, item: &LibraryItem) -> PathBuf {
-        if item.kind == ItemKind::Skill {
-            item.source.join("SKILL.md")
-        } else {
-            item.source.clone()
+        match item.kind {
+            ItemKind::Skill => item.source.join("SKILL.md"),
+            ItemKind::Agent => item.source.clone(),
+            ItemKind::Plugin => item.source.join(MANIFEST),
         }
     }
 
@@ -181,8 +202,7 @@ impl Library for FsLibrary {
         }
         fs::create_dir_all(&self.trash).map_err(io_err(&self.trash))?;
         let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let kind = if kind == ItemKind::Skill { "skill" } else { "agent" };
-        let base = format!("{secs}-library-{kind}-{}", path.replace('/', "_"));
+        let base = format!("{secs}-library-{}-{}", kind.label(), path.replace('/', "_"));
         let to = (0..)
             .map(|n| if n == 0 { base.clone() } else { format!("{base}-{n}") })
             .map(|f| self.trash.join(f))
