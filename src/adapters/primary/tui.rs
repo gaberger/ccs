@@ -144,81 +144,44 @@ pub enum Exit {
     Shell(String),
 }
 
-/// The menu bar over the left-hand list: one section shows at a time (ADR-2610261643 §13).
+/// Every kind of library entry, in the order the TUI shows them.
+const KINDS: [ItemKind; 3] = [ItemKind::Skill, ItemKind::Agent, ItemKind::Plugin];
+
+/// What the State's row model lists: a kit, for its library picker, or the library's kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
-    Profiles,
     Kits,
     Library,
 }
 
-/// Every kind of library entry, in the order the TUI shows them.
-const KINDS: [ItemKind; 3] = [ItemKind::Skill, ItemKind::Agent, ItemKind::Plugin];
-
-const SECTIONS: [Section; 3] = [Section::Profiles, Section::Kits, Section::Library];
-
-impl Section {
-    fn label(self) -> &'static str {
-        match self {
-            Section::Profiles => "Profiles",
-            Section::Kits => "Kits",
-            Section::Library => "Library",
-        }
-    }
-}
-
-/// A row of the left-hand list.
+/// The library page's subject: a kit it picks for, or one kind of the library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Row {
-    /// The only row of an empty Profiles section, so `n` and `i` work before any profile exists.
-    ProfilesHeading,
-    Profile(Name),
-    /// The only row of an empty Kits section.
-    KitsHeading,
     Kit(String),
     Library(ItemKind),
 }
 
+/// The library page's kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
-    Overview,
-    Kits,
     Skills,
     Agents,
     Plugins,
-    Instructions,
-    Profiles,
 }
 
 impl Tab {
-    fn title(self) -> &'static str {
-        match self {
-            Tab::Overview => "Overview",
-            Tab::Kits => "Kits",
-            Tab::Skills => "Skills",
-            Tab::Agents => "Agents",
-            Tab::Plugins => "Plugins",
-            Tab::Instructions => "CLAUDE.md",
-            Tab::Profiles => "Profiles",
-        }
-    }
-
     fn kind(self) -> Option<ItemKind> {
-        match self {
-            Tab::Skills => Some(ItemKind::Skill),
-            Tab::Agents => Some(ItemKind::Agent),
-            Tab::Plugins => Some(ItemKind::Plugin),
-            _ => None,
-        }
+        Some(match self {
+            Tab::Skills => ItemKind::Skill,
+            Tab::Agents => ItemKind::Agent,
+            Tab::Plugins => ItemKind::Plugin,
+        })
     }
 }
 
 fn tabs(row: &Row) -> &'static [Tab] {
     match row {
-        Row::Profile(_) => &[Tab::Overview, Tab::Kits],
-        Row::ProfilesHeading => &[Tab::Overview],
-        Row::KitsHeading => &[Tab::Kits],
-        Row::Kit(_) => &[Tab::Skills, Tab::Agents, Tab::Plugins, Tab::Instructions, Tab::Profiles],
+        Row::Kit(_) => &[Tab::Skills, Tab::Agents, Tab::Plugins],
         Row::Library(ItemKind::Skill) => &[Tab::Skills],
         Row::Library(ItemKind::Agent) => &[Tab::Agents],
         Row::Library(ItemKind::Plugin) => &[Tab::Plugins],
@@ -342,7 +305,49 @@ fn folder_label(kind: ItemKind, folder: &str) -> String {
     }
 }
 
+/// A page above Home (ADR-2610261643 §18). Esc returns to the one below.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Page {
+    Profile(Name),
+    Kit(String),
+    /// The library: a picker for `kit`, or, with `None`, to manage it.
+    Library { kit: Option<String> },
+}
+
+/// A row of a profile's page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProfileItem {
+    Launch,
+    Kit(String),
+    Variables,
+    Default,
+    Copy,
+    Shell,
+}
+
+/// A row of a kit's page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum KitItem {
+    Entry(Entry),
+    Add,
+    Instructions,
+    Profile(Name),
+    Rename,
+    Delete,
+}
+
 pub struct State {
+    /// Home: the launch screen (§10), the page under every other.
+    home: Picker,
+    /// The pages opened from Home, each with the row it was on.
+    stack: Vec<(Page, usize)>,
+    page_scroll: Scroll,
+    /// The open profile page's overview.
+    page_overview: Option<Result<ProfileOverview, String>>,
+    /// The open kit page's instructions.
+    page_text: Option<String>,
+    /// Every library item, for the counts on a kit's page.
+    library: Vec<LibraryItem>,
     profiles: Vec<ProfileRow>,
     kits: Vec<String>,
     sel: usize,
@@ -351,7 +356,6 @@ pub struct State {
     focus: Focus,
     body_sel: usize,
     body_filter: String,
-    overview: Option<Result<ProfileOverview, String>>,
     /// The library tree for the tab's kind.
     tree: Vec<TreeRow>,
     /// Item counts per kind: the library's, or what the selected kit picks.
@@ -366,13 +370,11 @@ pub struct State {
     picked_only: bool,
     /// The selected kit's `uses`.
     uses: Vec<Entry>,
-    instructions: Option<String>,
     mode: Mode,
     message: Option<String>,
     editing: Option<EditTarget>,
+    /// Which rows the State's model lists: a kit's, for its library picker, or the library's kinds.
     section: Section,
-    /// The row each section was on, so switching back finds it.
-    sels: [usize; 3],
     list_scroll: Scroll,
     body_scroll: Scroll,
     pick_scroll: Scroll,
@@ -382,7 +384,14 @@ pub struct State {
 
 impl State {
     pub fn new(b: &dyn Browser) -> State {
+        let current = b.profiles().into_iter().find(|p| p.current).map(|p| p.name.as_str().to_string());
         let mut s = State {
+            home: Picker::new(b, current.as_deref()),
+            stack: vec![],
+            page_scroll: Scroll::default(),
+            page_overview: None,
+            page_text: None,
+            library: vec![],
             profiles: vec![],
             kits: vec![],
             sel: 0,
@@ -391,7 +400,6 @@ impl State {
             focus: Focus::List,
             body_sel: 0,
             body_filter: String::new(),
-            overview: None,
             tree: vec![],
             counts: [0; 3],
             all_uses: vec![],
@@ -399,59 +407,39 @@ impl State {
             marks: BTreeSet::new(),
             picked_only: false,
             uses: vec![],
-            instructions: None,
             mode: Mode::Normal,
             message: None,
             editing: None,
-            section: Section::Profiles,
-            sels: [0; 3],
+            section: Section::Library,
             list_scroll: Scroll::default(),
             body_scroll: Scroll::default(),
             pick_scroll: Scroll::default(),
             view_scroll: Scroll::default(),
         };
         s.refresh(b);
-        if s.profiles.is_empty() {
-            s.message = Some("No profiles yet: n makes one, i imports your AWS profiles".into());
-        }
         s
     }
 
     fn rows(&self) -> Vec<Row> {
         let f = &self.list_filter;
         let rows: Vec<Row> = match self.section {
-            Section::Profiles => self.profiles.iter().filter(|p| matches(f, p.name.as_str())).map(|p| Row::Profile(p.name.clone())).collect(),
             Section::Kits => self.kits.iter().filter(|k| matches(f, k)).map(|k| Row::Kit(k.clone())).collect(),
             Section::Library => KINDS.iter().map(|k| Row::Library(*k)).collect(),
         };
-        if !rows.is_empty() {
-            return rows;
+        if rows.is_empty() {
+            return vec![Row::Library(ItemKind::Skill)];
         }
-        vec![if self.section == Section::Profiles { Row::ProfilesHeading } else { Row::KitsHeading }]
+        rows
     }
 
     fn row(&self) -> Row {
         let rows = self.rows();
-        rows.get(self.sel).or(rows.last()).cloned().unwrap_or(Row::ProfilesHeading)
+        rows.get(self.sel).or(rows.last()).cloned().unwrap_or(Row::Library(ItemKind::Skill))
     }
 
     fn tab(&self) -> Tab {
         let t = tabs(&self.row());
         t[self.tab.min(t.len() - 1)]
-    }
-
-    /// The selected profile, for callers and tests. `None` on any other row.
-    pub fn selected_profile(&self) -> Option<&str> {
-        let name = match self.rows().get(self.sel) {
-            Some(Row::Profile(n)) => n.clone(),
-            _ => return None,
-        };
-        self.profiles.iter().find(|p| p.name == name).map(|p| p.name.as_str())
-    }
-
-    /// Whether the body is a list the cursor can move in.
-    fn body_is_list(&self) -> bool {
-        matches!(self.tab(), Tab::Skills | Tab::Agents | Tab::Plugins | Tab::Profiles) || (self.tab() == Tab::Kits && matches!(self.row(), Row::Profile(_)))
     }
 
     /// Tree rows matching the body filter, with the folders above each match.
@@ -477,27 +465,17 @@ impl State {
 
     /// The first body row with a tick, so a long list can show it.
     fn first_ticked(&self) -> Option<usize> {
-        match (self.row(), self.tab()) {
-            (Row::Profile(n), Tab::Kits) => {
-                let mine = self.profiles.iter().find(|p| p.name == n).map(|p| p.kits.clone()).unwrap_or_default();
-                self.kits.iter().position(|k| mine.contains(k))
-            }
-            (Row::Kit(k), Tab::Profiles) => self.profiles.iter().position(|p| p.kits.contains(&k)),
-            (Row::Kit(_), tab) => {
-                let kind = tab.kind()?;
+        match self.row() {
+            Row::Kit(_) => {
+                let kind = self.tab().kind()?;
                 self.visible_tree().iter().position(|r| pick(&self.uses, kind, r) != Pick::No)
             }
-            _ => None,
+            Row::Library(_) => None,
         }
     }
 
     fn body_len(&self) -> usize {
-        match self.tab() {
-            Tab::Skills | Tab::Agents | Tab::Plugins => self.visible_tree().len(),
-            Tab::Kits => self.kits.len(),
-            Tab::Profiles => self.profiles.len(),
-            _ => 0,
-        }
+        self.visible_tree().len()
     }
 
     /// Reload everything the selected row and tab show.
@@ -506,17 +484,20 @@ impl State {
         self.kits = b.kits();
         self.sel = self.sel.min(self.rows().len() - 1);
         let row = self.row();
-        self.overview = match &row {
-            Row::Profile(n) => Some(b.overview(n).map_err(|e| e.to_string())),
-            _ => None,
-        };
-        (self.uses, self.instructions) = match &row {
-            Row::Kit(k) => (b.kit_uses(k).unwrap_or_default(), b.kit_instructions(k)),
-            _ => (vec![], None),
+        self.uses = match &row {
+            Row::Kit(k) => b.kit_uses(k).unwrap_or_default(),
+            Row::Library(_) => vec![],
         };
         self.all_uses = self.kits.iter().map(|k| (k.clone(), b.kit_uses(k).unwrap_or_default())).collect();
         let library = whole_library(b);
         self.kit_details = self.all_uses.iter().map(|(k, u)| kit_detail(u, &library, b.kit_instructions(k).is_some())).collect();
+        self.library = library;
+        self.home.reload(b);
+        (self.page_overview, self.page_text) = match self.page() {
+            Some(Page::Profile(n)) => (Some(b.overview(&n).map_err(|e| e.to_string())), None),
+            Some(Page::Kit(k)) => (None, b.kit_instructions(&k)),
+            _ => (None, None),
+        };
         let mut trees = KINDS.map(|kind| {
             let (items, folders) = b.library(kind);
             (kind, library_tree(&items, &folders))
@@ -533,9 +514,6 @@ impl State {
             None => vec![],
         };
         self.body_sel = self.body_sel.min(self.body_len().saturating_sub(1));
-        if !self.body_is_list() {
-            self.focus = Focus::List;
-        }
     }
 
     /// Apply one key. `Some` ends the TUI.
@@ -639,7 +617,13 @@ impl State {
                             lines.join(" · ")
                         }
                         Pending::DeleteKit(k) => match b.remove_kit(&k) {
-                            Ok(at) => format!("moved kit {k} to {}; no profile uses it now", at.display()),
+                            Ok(at) => {
+                                // Its pages close: there is nothing left to show.
+                                while matches!(self.page(), Some(Page::Kit(x)) | Some(Page::Library { kit: Some(x) }) if x == k) {
+                                    self.stack.pop();
+                                }
+                                format!("moved kit {k} to {}; no profile uses it now", at.display())
+                            }
                             Err(err) => err.to_string(),
                         },
                     });
@@ -674,14 +658,239 @@ impl State {
                 self.refresh(b);
                 None
             }
-            Mode::Normal => self.normal(b, key),
+            Mode::Normal => {
+                self.message = None;
+                match self.page() {
+                    None => self.home_key(b, key),
+                    Some(Page::Profile(n)) => self.profile_key(b, key, n),
+                    Some(Page::Kit(k)) => self.kit_key(b, key, k),
+                    Some(Page::Library { kit }) => self.library_key(b, key, kit),
+                }
+            }
         }
     }
 
-    fn normal(&mut self, b: &dyn Browser, key: Key) -> Option<Exit> {
-        self.message = None;
+    // ── Pages (ADR-2610261643 §18) ───────────────────────────────────────────
+
+    fn page(&self) -> Option<Page> {
+        self.stack.last().map(|(p, _)| p.clone())
+    }
+
+    fn page_sel(&self) -> usize {
+        self.stack.last().map(|(_, i)| *i).unwrap_or(0)
+    }
+
+    fn set_page_sel(&mut self, i: usize) {
+        if let Some((_, sel)) = self.stack.last_mut() {
+            *sel = i;
+        }
+    }
+
+    fn push(&mut self, b: &dyn Browser, page: Page) {
+        self.stack.push((page, 0));
+        self.page_scroll.reset();
+        self.refresh(b);
+    }
+
+    /// Back one page; from the library, the State's own rows return to rest.
+    fn pop(&mut self, b: &dyn Browser) {
+        self.stack.pop();
+        self.page_scroll.reset();
+        self.focus = Focus::List;
+        self.refresh(b);
+    }
+
+    /// Open the library on `kind`: a picker for `kit`, or to manage it.
+    fn open_library(&mut self, b: &dyn Browser, kit: Option<String>, kind: ItemKind) {
+        let at = KINDS.iter().position(|k| *k == kind).unwrap_or(0);
+        self.list_filter.clear();
+        match &kit {
+            Some(k) => {
+                self.section = Section::Kits;
+                self.sel = self.kits.iter().position(|x| x == k).unwrap_or(0);
+                self.tab = at;
+            }
+            None => {
+                self.section = Section::Library;
+                self.sel = at;
+                self.tab = 0;
+            }
+        }
+        self.stack.push((Page::Library { kit }, 0));
+        self.library_landed(b);
+    }
+
+    /// A library page (or kind) just shown: the cursor starts on the first pick,
+    /// so what the kit holds is in view (§16).
+    fn library_landed(&mut self, b: &dyn Browser) {
+        self.focus = Focus::Body;
+        self.row_changed(b);
+        self.focus = Focus::Body;
+        self.body_sel = self.first_ticked().unwrap_or(0);
+    }
+
+    /// The kind the library page shows.
+    fn library_kind(&self) -> ItemKind {
+        self.tab().kind().unwrap_or(ItemKind::Skill)
+    }
+
+    fn home_key(&mut self, b: &dyn Browser, key: Key) -> Option<Exit> {
+        let on_kits = self.home.focus == Focus::Body;
         match key {
-            Key::Char('q') | Key::Esc => return Some(Exit::Quit),
+            Key::Char('e') => match (on_kits, self.home.kits.get(self.home.kit_sel), self.home.profiles.get(self.home.sel)) {
+                (true, Some((k, _)), _) => {
+                    let k = k.clone();
+                    self.push(b, Page::Kit(k));
+                }
+                (false, _, Some(p)) => {
+                    let n = p.name.clone();
+                    self.push(b, Page::Profile(n));
+                }
+                _ => {}
+            },
+            Key::Char('n') if on_kits => self.input(Purpose::NewKit),
+            Key::Char('n') => self.input(Purpose::NewProfile { from: None }),
+            Key::Char('i') => self.ask_import(b),
+            Key::Char('l') => self.open_library(b, None, ItemKind::Skill),
+            k => {
+                let exit = self.home.handle(b, k);
+                self.message = self.home.message.take();
+                return exit;
+            }
+        }
+        None
+    }
+
+    fn profile_items(&self) -> Vec<ProfileItem> {
+        let mut rows = vec![ProfileItem::Launch];
+        rows.extend(self.kits.iter().map(|k| ProfileItem::Kit(k.clone())));
+        rows.extend([ProfileItem::Variables, ProfileItem::Default, ProfileItem::Copy, ProfileItem::Shell]);
+        rows
+    }
+
+    fn profile_key(&mut self, b: &dyn Browser, key: Key, n: Name) -> Option<Exit> {
+        let rows = self.profile_items();
+        let row = rows.get(self.page_sel()).cloned().unwrap_or(ProfileItem::Launch);
+        let attached = |s: &State, k: &str| s.profiles.iter().any(|p| p.name == n && p.kits.iter().any(|x| x == k));
+        match key {
+            Key::Esc => self.pop(b),
+            Key::Char('q') => return Some(Exit::Quit),
+            k if movement(k, 0).is_some() => self.move_page(k, rows.len()),
+            Key::Char(' ') => {
+                if let ProfileItem::Kit(k) = &row {
+                    let on = !attached(self, k);
+                    if let Err(e) = b.attach(k, &n, on) {
+                        self.message = Some(e.to_string());
+                    }
+                    self.refresh(b);
+                }
+            }
+            Key::Enter | Key::Char('e') => match row {
+                ProfileItem::Launch if key == Key::Enter => return Some(Exit::Launch(n.as_str().into())),
+                ProfileItem::Kit(k) => self.push(b, Page::Kit(k)),
+                ProfileItem::Default if key == Key::Enter => {
+                    self.message = Some(match b.set_default(&n) {
+                        Ok(()) => format!("{} is now the default", n.as_str()),
+                        Err(e) => e.to_string(),
+                    });
+                    self.refresh(b);
+                }
+                ProfileItem::Copy if key == Key::Enter => self.input(Purpose::NewProfile { from: Some(n) }),
+                ProfileItem::Shell if key == Key::Enter => return Some(Exit::Shell(n.as_str().into())),
+                _ => self.editing = Some(EditTarget::Profile(n)),
+            },
+            _ => {}
+        }
+        None
+    }
+
+    fn kit_items(&self, kit: &str) -> Vec<KitItem> {
+        let uses = self.all_uses.iter().find(|(k, _)| k == kit).map(|(_, u)| u.clone()).unwrap_or_default();
+        let mut rows: Vec<KitItem> = uses.into_iter().map(KitItem::Entry).collect();
+        rows.extend([KitItem::Add, KitItem::Instructions]);
+        rows.extend(self.profiles.iter().map(|p| KitItem::Profile(p.name.clone())));
+        rows.extend([KitItem::Rename, KitItem::Delete]);
+        rows
+    }
+
+    fn kit_key(&mut self, b: &dyn Browser, key: Key, kit: String) -> Option<Exit> {
+        let rows = self.kit_items(&kit);
+        let row = rows.get(self.page_sel()).cloned().unwrap_or(KitItem::Add);
+        let switch = |s: &mut State, p: &Name| {
+            let on = !s.profiles.iter().any(|x| x.name == *p && x.kits.contains(&kit));
+            if let Err(e) = b.attach(&kit, p, on) {
+                s.message = Some(e.to_string());
+            }
+            s.refresh(b);
+        };
+        match key {
+            Key::Esc => self.pop(b),
+            Key::Char('q') => return Some(Exit::Quit),
+            k if movement(k, 0).is_some() => self.move_page(k, rows.len()),
+            Key::Char(' ') => match &row {
+                KitItem::Entry(e) => {
+                    self.message = Some(match b.set_use(&kit, e, false) {
+                        Ok(()) => format!("{kit} no longer picks {}; + Add from the library brings it back", e.line()),
+                        Err(err) => err.to_string(),
+                    });
+                    self.refresh(b);
+                    let len = self.kit_items(&kit).len();
+                    self.set_page_sel(self.page_sel().min(len.saturating_sub(1)));
+                }
+                KitItem::Profile(p) => switch(self, p),
+                _ => {}
+            },
+            Key::Enter | Key::Char('e') => match row {
+                KitItem::Entry(e @ Entry::Item(..)) if key == Key::Enter => match b.read(&e) {
+                    Ok(text) => self.mode = Mode::View { title: e.line(), text, scroll: 0 },
+                    Err(err) => self.message = Some(err.to_string()),
+                },
+                KitItem::Entry(e) => self.open_library(b, Some(kit), e.kind()),
+                KitItem::Add => self.open_library(b, Some(kit), ItemKind::Skill),
+                KitItem::Instructions => self.editing = Some(EditTarget::Kit(kit)),
+                KitItem::Profile(p) => switch(self, &p),
+                KitItem::Rename => self.input(Purpose::RenameKit { old: kit }),
+                KitItem::Delete => {
+                    self.message = Some(format!("Delete kit {kit}? y/n"));
+                    self.mode = Mode::Confirm(Pending::DeleteKit(kit));
+                }
+            },
+            _ => {}
+        }
+        None
+    }
+
+    fn move_page(&mut self, k: Key, len: usize) {
+        let delta = movement(k, self.page_scroll.page.get()).unwrap_or(0);
+        self.page_scroll.follow(k, delta, len);
+        self.set_page_sel(shifted(self.page_sel(), delta, len));
+    }
+
+    fn library_key(&mut self, b: &dyn Browser, key: Key, kit: Option<String>) -> Option<Exit> {
+        match key {
+            Key::Esc => self.pop(b),
+            Key::Char('q') => return Some(Exit::Quit),
+            Key::Left | Key::Right => {
+                let at = KINDS.iter().position(|k| *k == self.library_kind()).unwrap_or(0);
+                let to = if key == Key::Right { (at + 1).min(KINDS.len() - 1) } else { at.saturating_sub(1) };
+                if to != at {
+                    if kit.is_some() {
+                        self.tab = to;
+                    } else {
+                        self.sel = to;
+                    }
+                    self.library_landed(b);
+                }
+            }
+            Key::Tab | Key::Char('h' | 'l' | 'c' | 'd' | 't') => {}
+            k => return self.library_normal(b, k),
+        }
+        None
+    }
+
+    /// The library page's keys (§9): the tree, its marks, picks and pickers.
+    fn library_normal(&mut self, b: &dyn Browser, key: Key) -> Option<Exit> {
+        match key {
             k if movement(k, 0).is_some() => {
                 let (scroll, len) = match self.focus {
                     Focus::List => (&self.list_scroll, self.rows().len()),
@@ -691,47 +900,11 @@ impl State {
                 scroll.follow(k, delta, len);
                 self.move_by(b, delta);
             }
-            Key::Left | Key::Right | Key::Char('h') | Key::Char('l') => {
-                let right = matches!(key, Key::Right | Key::Char('l'));
-                let last = tabs(&self.row()).len() - 1;
-                self.tab = if right { (self.tab.min(last) + 1).min(last) } else { self.tab.min(last).saturating_sub(1) };
-                self.body_sel = 0;
-                self.body_filter.clear();
-                self.marks.clear();
-                self.body_scroll.reset();
-                self.refresh(b);
-                self.body_scroll.reveal(self.first_ticked());
-            }
-            Key::Tab if self.body_is_list() => {
-                self.focus = if self.focus == Focus::List { Focus::Body } else { Focus::List };
-                self.body_sel = self.body_scroll.in_view(self.first_ticked(), self.body_sel);
-            }
-            Key::Enter => match (self.focus, self.row()) {
-                (Focus::List, Row::Profile(n)) => return Some(Exit::Launch(n.as_str().into())),
-                (Focus::Body, _) => self.view(b),
-                _ => {}
-            },
+            Key::Enter => self.view(b),
             Key::Char('/') => self.mode = Mode::Search,
-            Key::Char('d') => {
-                if let Row::Profile(n) = self.row() {
-                    self.message = Some(match b.set_default(&n) {
-                        Ok(()) => format!("{} is now the default", n.as_str()),
-                        Err(e) => e.to_string(),
-                    });
-                    self.refresh(b);
-                }
-            }
-            Key::Char(' ') if self.focus == Focus::Body => self.toggle(b),
-            Key::Char('v') if self.focus == Focus::Body => self.view(b),
-            Key::Char(c @ '1'..='3') => self.switch(b, SECTIONS[c as usize - '1' as usize]),
+            Key::Char(' ') => self.toggle(b),
+            Key::Char('v') => self.view(b),
             Key::Char('e') => self.ask_edit(),
-            Key::Char('t') => {
-                if let (Row::Profile(n), Focus::List) = (self.row(), self.focus) {
-                    return Some(Exit::Shell(n.as_str().into()));
-                }
-            }
-            Key::Char('c') => self.ask_copy(),
-            Key::Char('i') => self.ask_import(b),
             Key::Char('a') => self.ask_add(),
             Key::Char('n') => self.ask_new(),
             Key::Char('m') => self.ask_move(),
@@ -774,49 +947,13 @@ impl State {
         self.body_scroll.reveal(self.first_ticked());
     }
 
-    /// `1` `2` `3`: show another section, on the row it was left at.
-    fn switch(&mut self, b: &dyn Browser, to: Section) {
-        if to == self.section {
-            return;
-        }
-        let at = |s: Section| SECTIONS.iter().position(|x| *x == s).unwrap_or(0);
-        self.sels[at(self.section)] = self.sel;
-        self.section = to;
-        self.sel = self.sels[at(to)];
-        self.list_filter.clear();
-        self.list_scroll.reset();
-        self.focus = Focus::List;
-        self.tab = 0;
-        self.row_changed(b);
-    }
-
-    /// Put the cursor on `row`, when the list shows it.
-    fn select(&mut self, row: &Row) {
-        if let Some(i) = self.rows().iter().position(|r| r == row) {
-            self.sel = i;
-        }
-    }
-
     fn library_tab(&self) -> Option<ItemKind> {
         (matches!(self.row(), Row::Library(_)) && self.focus == Focus::Body).then(|| self.tab().kind()).flatten()
     }
 
-    /// Space: attach a kit to the profile, or pick a tree row for the kit.
+    /// Space in the library: mark a row, or pick it for the kit.
     fn toggle(&mut self, b: &dyn Browser) {
         match (self.row(), self.tab()) {
-            (Row::Profile(n), Tab::Kits) => {
-                let Some(kit) = self.kits.get(self.body_sel).cloned() else { return };
-                let on = !self.profiles.iter().any(|p| p.name == n && p.kits.contains(&kit));
-                if let Err(e) = b.attach(&kit, &n, on) {
-                    self.message = Some(e.to_string());
-                }
-            }
-            (Row::Kit(k), Tab::Profiles) => {
-                let Some(p) = self.profiles.get(self.body_sel).cloned() else { return };
-                if let Err(e) = b.attach(&k, &p.name, !p.kits.contains(&k)) {
-                    self.message = Some(e.to_string());
-                }
-            }
             (Row::Library(_), _) => {
                 let Some(r) = self.tree_row() else { return };
                 if !self.marks.remove(&r.path) {
@@ -839,7 +976,6 @@ impl State {
                     self.message = Some(e.to_string());
                 }
             }
-            _ => return,
         }
         self.refresh(b);
     }
@@ -856,19 +992,12 @@ impl State {
         }
     }
 
-    /// `e`: a kit's CLAUDE.md on its tab, else the highlighted item.
+    /// `e` in the library: the highlighted item's file.
     fn ask_edit(&mut self) {
-        match (self.row(), self.tab()) {
-            (Row::Kit(k), Tab::Instructions) => self.editing = Some(EditTarget::Kit(k)),
-            (Row::Profile(n), _) if self.focus == Focus::List => self.editing = Some(EditTarget::Profile(n)),
-            (_, tab) if self.focus == Focus::Body => {
-                if let (Some(kind), Some(r)) = (tab.kind(), self.tree_row()) {
-                    if r.item.is_some() {
-                        self.editing = Some(EditTarget::Entry(r.entry(kind)));
-                    }
-                }
+        if let (Some(kind), Some(r)) = (self.tab().kind(), self.tree_row()) {
+            if r.item.is_some() {
+                self.editing = Some(EditTarget::Entry(r.entry(kind)));
             }
-            _ => {}
         }
     }
 
@@ -923,20 +1052,11 @@ impl State {
 
     fn ask_new(&mut self) {
         match self.row() {
-            Row::ProfilesHeading | Row::Profile(_) if self.focus == Focus::List => self.input(Purpose::NewProfile { from: None }),
-            Row::KitsHeading | Row::Kit(_) if self.focus == Focus::List => self.input(Purpose::NewKit),
             Row::Library(_) if self.library_tab().is_some() => {
                 let base = self.tree_row().map(|r| r.folder()).unwrap_or_default();
                 self.input(Purpose::Mkdir { base });
             }
             _ => {}
-        }
-    }
-
-    /// `c`: a new profile with the highlighted one's variables, kits and settings.
-    fn ask_copy(&mut self) {
-        if let (Row::Profile(n), Focus::List) = (self.row(), self.focus) {
-            self.input(Purpose::NewProfile { from: Some(n) });
         }
     }
 
@@ -1104,28 +1224,41 @@ impl State {
                 let folder = if base.is_empty() { name.to_string() } else { format!("{base}/{name}") };
                 b.mkdir(kind, &folder).map(|()| format!("made {}", folder_label(kind, &folder)))
             }
+            // A new kit or profile opens at once: filling it in is the next step (§18).
             Purpose::NewKit => {
                 let made = b.new_kit(text);
                 if made.is_ok() {
-                    self.refresh(b);
-                    self.select(&Row::Kit(text.into()));
+                    self.push(b, Page::Kit(text.into()));
                 }
-                made.map(|()| format!("made kit {text}; pick its skills on its Skills tab"))
+                made.map(|()| format!("made kit {text}; + Add from the library fills it"))
             }
             Purpose::NewProfile { from } => {
                 let made = b.new_profile(text, from.as_ref());
                 if made.is_ok() {
                     self.refresh(b);
                     if let Some(n) = self.profiles.iter().find(|p| p.name.as_str() == text).map(|p| p.name.clone()) {
-                        self.select(&Row::Profile(n));
+                        // A copy takes the place of the page it was made from.
+                        if from.is_some() && matches!(self.page(), Some(Page::Profile(_))) {
+                            self.stack.pop();
+                        }
+                        self.push(b, Page::Profile(n));
                     }
                 }
                 made.map(|()| match &from {
                     Some(f) => format!("copied {} to {text}: variables, kits and settings, not the login", f.as_str()),
-                    None => format!("made profile {text}; e edits its variables, ⏎ launches it to log in"),
+                    None => format!("made profile {text}; set its variables, then launch it to log in"),
                 })
             }
-            Purpose::RenameKit { old } => b.rename_kit(&old, text).map(|()| format!("kit {old} is now {text}")),
+            Purpose::RenameKit { old } => b.rename_kit(&old, text).map(|()| {
+                for (page, _) in &mut self.stack {
+                    match page {
+                        Page::Kit(k) if *k == old => *k = text.into(),
+                        Page::Library { kit: Some(k) } if *k == old => *k = text.into(),
+                        _ => {}
+                    }
+                }
+                format!("kit {old} is now {text}")
+            }),
             Purpose::RenameFolder { kind, folder } => {
                 b.rename_folder(kind, &folder, text).map(|()| format!("renamed {} to {text}; kits follow it", folder_label(kind, &folder)))
             }
@@ -1134,20 +1267,26 @@ impl State {
         self.refresh(b);
     }
 
-    fn hints(&self) -> &'static str {
-        match (self.focus, self.row(), self.tab()) {
-            (Focus::List, Row::Profile(_), _) => "⏎ launch · t shell · n new · c copy · e edit · d default · i import · ←→ tab · 1 2 3 section · q quit",
-            (Focus::List, Row::ProfilesHeading, _) => "n new profile · i import · 1 2 3 section · q quit",
-            (Focus::List, Row::KitsHeading, _) => "n new kit · i import · 1 2 3 section · q quit",
-            (Focus::List, Row::Kit(_), Tab::Instructions) => "↑↓ move · ←→ tab · e edit · n new kit · r rename · x delete kit · 1 2 3 section · q quit",
-            (Focus::List, Row::Kit(_), _) => "↑↓ move · ←→ tab · tab focus · n new kit · r rename · x delete kit · 1 2 3 section · q quit",
-            (Focus::List, Row::Library(ItemKind::Plugin), _) => "1 2 3 section · ↑↓ move · tab focus · u update all · i import · q quit",
-            (Focus::List, Row::Library(_), _) => "1 2 3 section · ↑↓ move · tab focus · i import · q quit",
-            (Focus::Body, Row::Library(ItemKind::Plugin), _) => "a add (owner/repo) · u update · + to kit · x delete · v view · / search · tab back",
-            (Focus::Body, Row::Profile(_), _) => "space attach · ↑↓ move · tab back · q quit",
-            (Focus::Body, Row::Kit(_), Tab::Profiles) => "space attach · ↑↓ move · tab back · q quit",
-            (Focus::Body, Row::Kit(_), _) => "space pick · p picked only · e edit · v view · / search · tab back",
-            (Focus::Body, _, _) => "space mark · m move · + to kit · a add · n folder · r rename · x delete · e edit · v view · /",
+    /// The footer's keys for the page that is open.
+    fn hints(&self) -> String {
+        match self.page() {
+            None => {
+                // What Enter starts, spelled as the command line would be (§17).
+                let launch = match self.home.profiles.get(self.home.sel) {
+                    Some(r) => format!("⏎ launch {}{}", r.name.as_str(), self.home.ticked.iter().map(|k| format!(" +{k}")).collect::<String>()),
+                    None => "n makes one".into(),
+                };
+                format!("{launch} · space tick · tab switch · e open · n new · i import · l library · s save · q quit")
+            }
+            Some(Page::Profile(_)) => "⏎ choose · space adds or removes a kit · e edit · esc back · q quit".into(),
+            Some(Page::Kit(_)) => "⏎ choose · space removes an entry or switches a profile · esc back · q quit".into(),
+            Some(Page::Library { kit: Some(_) }) => "space pick · p picked only · ←→ skills, agents, plugins · / search · v view · e edit · esc back".into(),
+            Some(Page::Library { kit: None }) if self.library_kind() == ItemKind::Plugin => {
+                "a add (owner/repo) · u update · + to kit · x delete · v view · / search · ←→ kind · esc back".into()
+            }
+            Some(Page::Library { kit: None }) => {
+                "space mark · m move · + to kit · a add · n folder · r rename · x delete · e edit · v view · / · ←→ kind · esc back".into()
+            }
         }
     }
 }
@@ -1204,81 +1343,23 @@ fn border(focused: bool) -> Style {
     }
 }
 
-fn overview_lines(o: &ProfileOverview) -> Vec<Line<'static>> {
-    let bold = Style::default().add_modifier(Modifier::BOLD);
-    let under = Style::default().add_modifier(Modifier::UNDERLINED);
-    let mut lines = vec![Line::styled(o.segment.clone(), bold), Line::from("")];
-    let kits: String = o.kits.iter().map(|k| format!("+{k} ")).collect();
-    lines.push(Line::from(if kits.is_empty() { "Kits: none (attach on the Kits tab)".to_string() } else { format!("Kits: {}", kits.trim_end()) }));
-    lines.push(Line::from(vec![
-        Span::raw(format!("Folder: {}  ", o.dir.display())),
-        Span::styled("t opens a shell here", Style::default().fg(Color::Cyan)),
-    ]));
-    lines.push(Line::from(""));
-    lines.push(Line::styled("Variables", under));
-    if o.env.is_empty() {
-        lines.push(Line::from("  (none)"));
-    }
-    lines.extend(o.env.iter().map(|(k, v)| Line::from(format!("  {k}={v}"))));
-    lines.push(Line::from(""));
-    lines.push(Line::styled("Doctor", under));
-    lines.extend(o.findings.iter().map(|f| match f {
-        Finding::Pass(m) => Line::styled(format!("  ✓ {m}"), Style::default().fg(Color::Green)),
-        Finding::Warn(m) => Line::styled(format!("  ! {m}"), Style::default().fg(Color::Yellow)),
-        Finding::Fail(m) => Line::styled(format!("  ✗ {m}"), Style::default().fg(Color::Red)),
-    }));
-    lines
-}
-
-const PROFILES_TEXT: &str = "\
-A profile is a login: a claude.ai account, or an AWS Bedrock account. It keeps
-its variables in profile.env and its own Claude Code config directory.
-
-n makes an empty profile; e on it edits its variables; ⏎ launches it, where
-/login signs in. On a profile, c copies it: variables, kits and settings,
-never the login. i imports your AWS CLI profiles as Bedrock profiles.";
-
-const KITS_TEXT: &str = "\
-A kit is a named set of skills and agents from the library, with optional
-instructions (a CLAUDE.md). A profile launches with the kits attached to it;
-`ccs <profile> +kit` picks others for one run.
-
-n makes a kit. On a kit, the Skills and Agents tabs pick from the library:
-space marks an item or a whole folder.";
-
 /// Below this width the list and the body stack, so neither is cut off.
 const NARROW: u16 = 70;
 
-/// Paint the whole screen from `state`.
+/// Paint the whole screen from `state`: the breadcrumb, the page, the footer.
 pub fn draw(frame: &mut Frame, state: &State) {
-    let [main, footer] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(frame.area());
-    // Side by side when there is room; a narrow terminal stacks the list over the body.
-    let [left, right] = if main.width >= NARROW {
-        Layout::horizontal([Constraint::Length(30), Constraint::Min(20)]).areas(main)
-    } else {
-        let list = u16::try_from(state.rows().len() + 3).unwrap_or(u16::MAX).min(main.height / 2);
-        Layout::vertical([Constraint::Length(list), Constraint::Min(5)]).areas(main)
-    };
-    draw_list(frame, state, left);
+    let [top, main, footer] = Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(frame.area());
+    draw_crumb(frame, state, top);
+    if !draw_overlay(frame, state, main) {
+        match state.page() {
+            None => draw_home(frame, main, &state.home),
+            Some(Page::Profile(n)) => draw_profile(frame, state, main, &n),
+            Some(Page::Kit(k)) => draw_kit(frame, state, main, &k),
+            Some(Page::Library { .. }) => draw_library(frame, state, main),
+        }
+    }
 
-    let [tabs_area, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(right);
-    let row_tabs = tabs(&state.row());
-    let titles: Vec<String> = row_tabs
-        .iter()
-        .map(|t| match t {
-            Tab::Skills => format!("Skills ({})", state.counts[0]),
-            Tab::Agents => format!("Agents ({})", state.counts[1]),
-            Tab::Plugins => format!("Plugins ({})", state.counts[2]),
-            t => t.title().to_string(),
-        })
-        .collect();
-    let tabs_widget = Tabs::new(titles)
-        .select(state.tab.min(row_tabs.len() - 1))
-        .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
-    frame.render_widget(tabs_widget, tabs_area);
-    draw_body(frame, state, body);
-
-    let kind = state.tab().kind().unwrap_or(ItemKind::Skill);
+    let kind = state.library_kind();
     let text = match &state.mode {
         Mode::Input { purpose, text, .. } => match purpose {
             Purpose::Add { .. } if kind == ItemKind::Plugin => {
@@ -1301,64 +1382,166 @@ pub fn draw(frame: &mut Frame, state: &State) {
             PickFor::AddToKit(e) => format!("Add {} to kit: {filter}▏  type to filter or name a new one · enter add · esc cancel", count(e)),
             PickFor::Import(_) => format!("Import: {filter}▏  type to filter · enter import · esc cancel"),
         },
-        Mode::Search => {
-            let f = if state.focus == Focus::List { &state.list_filter } else { &state.body_filter };
-            format!("/ {f}▏  enter keep · esc clear")
-        }
-        _ => state.message.clone().unwrap_or_else(|| state.hints().into()),
+        Mode::Search => format!("/ {}▏  enter keep · esc clear", state.body_filter),
+        _ => state.message.clone().unwrap_or_else(|| state.hints()),
     };
     frame.render_widget(Paragraph::new(text).style(Style::default().fg(Color::DarkGray)), footer);
 }
 
-fn draw_list(frame: &mut Frame, state: &State, area: Rect) {
-    // The profile a bare `ccs` launches, in every section, so it is always clear (§17).
-    let title = match state.profiles.iter().find(|p| p.current) {
-        Some(p) => format!(" ccs · ⬡ {} ", p.name.as_str()),
-        None => " ccs · no profile ".to_string(),
+/// `ccs › work › kit net › library` on the left; the current profile on the right (§17, §18).
+fn draw_crumb(frame: &mut Frame, state: &State, area: Rect) {
+    let mut path = vec!["ccs".to_string()];
+    path.extend(state.stack.iter().map(|(p, _)| match p {
+        Page::Profile(n) => n.as_str().to_string(),
+        Page::Kit(k) => format!("kit {k}"),
+        Page::Library { .. } => "library".into(),
+    }));
+    let now = match state.profiles.iter().find(|p| p.current) {
+        Some(p) => format!("⬡ {}{} ", p.name.as_str(), p.kits.iter().map(|k| format!(" +{k}")).collect::<String>()),
+        None => "no profile chosen ".into(),
     };
-    let block = Block::default().borders(Borders::ALL).title(title).border_style(border(state.focus == Focus::List));
-    let rows = state.rows();
-    let items: Vec<ListItem> = rows
-        .iter()
-        .map(|r| match r {
-            Row::Profile(n) => {
-                let Some(p) = state.profiles.iter().find(|p| p.name == *n) else { return ListItem::new(n.as_str().to_string()) };
-                let mut s = p.name.as_str().to_string();
-                for k in &p.kits {
-                    s += &format!(" +{k}");
-                }
-                if p.is_default {
-                    s += " (default)";
-                }
-                if p.current {
-                    s += " *";
-                }
-                ListItem::new(s)
-            }
-            Row::ProfilesHeading => ListItem::new("none yet · n makes one").style(Style::default().fg(Color::DarkGray)),
-            Row::KitsHeading => ListItem::new("none yet · n makes one").style(Style::default().fg(Color::DarkGray)),
-            Row::Kit(k) => ListItem::new(k.clone()),
-            Row::Library(kind) => ListItem::new(format!("{}s", kind.label())),
-        })
-        .collect();
-    let [bar, list] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
-    let mut spans = vec![Span::raw(" ")];
-    for (i, sec) in SECTIONS.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-        }
-        spans.push(if *sec == state.section {
-            Span::styled(sec.label(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED))
-        } else {
-            Span::raw(sec.label())
-        });
-    }
-    frame.render_widget(Paragraph::new(Line::from(spans)), bar);
-    render_list(frame, list, block, items, Some(state.sel), &state.list_scroll, Some("▶ "));
+    let width = u16::try_from(now.chars().count()).unwrap_or(u16::MAX);
+    let [left, right] = Layout::horizontal([Constraint::Min(1), Constraint::Length(width)]).areas(area);
+    frame.render_widget(Paragraph::new(format!(" {}", path.join(" › "))).style(Style::default().add_modifier(Modifier::BOLD)), left);
+    frame.render_widget(Paragraph::new(now).style(Style::default().fg(Color::Cyan)), right);
 }
 
-fn draw_body(frame: &mut Frame, state: &State, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).border_style(border(state.focus == Focus::Body));
+/// One line of a page: a row the cursor can be on, or a label it skips.
+struct Line2<'a> {
+    item: ListItem<'a>,
+    row: Option<usize>,
+}
+
+fn row_line<'a>(row: usize, item: impl Into<ListItem<'a>>) -> Line2<'a> {
+    Line2 { item: item.into(), row: Some(row) }
+}
+
+fn label<'a>(text: impl Into<String>) -> Line2<'a> {
+    Line2 { item: ListItem::new(text.into()).style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)), row: None }
+}
+
+fn detail_lines<'a>(detail: &[String]) -> impl Iterator<Item = Line2<'a>> + '_ {
+    detail.iter().map(|d| Line2 { item: ListItem::new(format!("      {d}")).style(Style::default().fg(Color::DarkGray)), row: None })
+}
+
+/// A page's lines, with the cursor on row `sel`.
+fn render_page(frame: &mut Frame, area: Rect, lines: Vec<Line2>, sel: usize, scroll: &Scroll) {
+    let at = lines.iter().position(|l| l.row == Some(sel));
+    let items = lines.into_iter().map(|l| l.item).collect();
+    let block = Block::default().borders(Borders::ALL).border_style(border(true));
+    render_list(frame, area, block, items, at, scroll, Some("▶ "));
+}
+
+fn draw_profile(frame: &mut Frame, state: &State, area: Rect, n: &Name) {
+    let me = state.profiles.iter().find(|p| p.name == *n);
+    let kits = me.map(|p| p.kits.clone()).unwrap_or_default();
+    let overview = state.page_overview.as_ref().and_then(|o| o.as_ref().ok());
+    let sel = state.page_sel();
+    let mut lines = Vec::new();
+    for (row, item) in state.profile_items().into_iter().enumerate() {
+        match &item {
+            ProfileItem::Launch => {
+                let launch = format!("⏎ Launch {}{}", n.as_str(), kits.iter().map(|k| format!(" +{k}")).collect::<String>());
+                lines.push(row_line(row, Line::from(vec![Span::styled(launch, Style::default().add_modifier(Modifier::BOLD))])));
+                lines.push(label(""));
+                lines.push(label("Kits it starts with"));
+                if state.kits.is_empty() {
+                    lines.push(label("  no kits yet: on Home, tab to the kits and press n"));
+                }
+            }
+            ProfileItem::Kit(k) => {
+                lines.push(row_line(row, tick(kits.contains(k), k)));
+                if row == sel {
+                    let i = state.kits.iter().position(|x| x == k).unwrap_or(0);
+                    lines.extend(detail_lines(state.kit_details.get(i).map(Vec::as_slice).unwrap_or_default()));
+                }
+            }
+            ProfileItem::Variables => {
+                lines.push(label(""));
+                let vars = overview.map(|o| o.env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" · ")).unwrap_or_default();
+                let vars = if vars.is_empty() { "none yet".to_string() } else { vars };
+                lines.push(row_line(row, format!("Variables  {vars}")));
+            }
+            ProfileItem::Default if me.is_some_and(|p| p.is_default) => lines.push(row_line(row, "It is the default")),
+            ProfileItem::Default => lines.push(row_line(row, "Make it the default")),
+            ProfileItem::Copy => lines.push(row_line(row, "Copy to a new profile")),
+            ProfileItem::Shell => lines.push(row_line(row, "Open a shell in its folder")),
+        }
+    }
+    // Below the rows: where it lives and what the doctor says.
+    let mut info: Vec<Line> = Vec::new();
+    if let Some(o) = overview {
+        info.push(Line::styled(o.segment.clone(), Style::default().add_modifier(Modifier::BOLD)));
+        info.push(Line::from(format!("Folder: {}", o.dir.display())));
+        info.extend(o.findings.iter().map(|f| match f {
+            Finding::Pass(m) => Line::styled(format!("✓ {m}"), Style::default().fg(Color::Green)),
+            Finding::Warn(m) => Line::styled(format!("! {m}"), Style::default().fg(Color::Yellow)),
+            Finding::Fail(m) => Line::styled(format!("✗ {m}"), Style::default().fg(Color::Red)),
+        }));
+    }
+    let want = u16::try_from(info.len() + 2).unwrap_or(u16::MAX).min(area.height / 2);
+    let [list, below] = Layout::vertical([Constraint::Min(3), Constraint::Length(want)]).areas(area);
+    render_page(frame, list, lines, sel, &state.page_scroll);
+    frame.render_widget(Paragraph::new(info).block(Block::default().borders(Borders::ALL).title(" doctor ")), below);
+}
+
+fn draw_kit(frame: &mut Frame, state: &State, area: Rect, kit: &str) {
+    let sel = state.page_sel();
+    let width = state.kit_items(kit).iter().filter_map(|r| if let KitItem::Entry(e) = r { Some(e.line().chars().count()) } else { None }).max().unwrap_or(0);
+    let mut lines = vec![label("Holds")];
+    let mut people = false;
+    for (row, item) in state.kit_items(kit).into_iter().enumerate() {
+        match item {
+            KitItem::Entry(e) => {
+                let line = match resolve_kit(std::slice::from_ref(&e), &state.library).items.len() {
+                    0 => format!("{:width$}  not in the library", e.line()),
+                    n => format!("{:width$}  {n}", e.line()),
+                };
+                lines.push(row_line(row, line));
+            }
+            KitItem::Add => {
+                if row == 0 {
+                    lines.push(label("  nothing yet"));
+                }
+                lines.push(row_line(row, Span::styled("+ Add from the library", Style::default().fg(Color::Green))));
+            }
+            KitItem::Instructions => {
+                let first = state.page_text.as_deref().and_then(|t| t.lines().find(|l| !l.trim().is_empty())).unwrap_or("none yet; ⏎ writes them");
+                lines.push(label(""));
+                lines.push(row_line(row, format!("CLAUDE.md  {first}")));
+            }
+            KitItem::Profile(p) => {
+                if !people {
+                    lines.push(label(""));
+                    lines.push(label("Used by"));
+                    people = true;
+                }
+                let on = state.profiles.iter().any(|x| x.name == p && x.kits.iter().any(|k| k == kit));
+                lines.push(row_line(row, tick(on, p.as_str())));
+            }
+            KitItem::Rename => {
+                lines.push(label(""));
+                lines.push(row_line(row, "Rename the kit"));
+            }
+            KitItem::Delete => lines.push(row_line(row, Span::styled("Delete the kit", Style::default().fg(Color::Red)))),
+        }
+    }
+    render_page(frame, area, lines, sel, &state.page_scroll);
+}
+
+/// The library page: a line of kinds, then the tree.
+fn draw_library(frame: &mut Frame, state: &State, area: Rect) {
+    let [tabs_area, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
+    let titles = vec![format!("Skills ({})", state.counts[0]), format!("Agents ({})", state.counts[1]), format!("Plugins ({})", state.counts[2])];
+    let at = KINDS.iter().position(|k| *k == state.library_kind()).unwrap_or(0);
+    let tabs_widget = Tabs::new(titles).select(at).highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    frame.render_widget(tabs_widget, tabs_area);
+    draw_body(frame, state, body);
+}
+
+/// The pager, a picker, or path completions, over whatever page is open.
+fn draw_overlay(frame: &mut Frame, state: &State, area: Rect) -> bool {
+    let block = Block::default().borders(Borders::ALL).border_style(border(true));
     if let Mode::View { title, text, scroll } = &state.mode {
         let visible = area.height.saturating_sub(2) as usize;
         state.view_scroll.page.set(visible);
@@ -1367,17 +1550,17 @@ fn draw_body(frame: &mut Frame, state: &State, area: Rect) {
         let block = block.title(format!(" {title} · esc back ")).title_bottom(Line::from(at).right_aligned());
         frame.render_widget(Paragraph::new(text.as_str()).block(block).scroll((*scroll, 0)), area);
         scrollbar(frame, area, lines, visible, *scroll as usize);
-        return;
+        return true;
     }
     if let Mode::Input { candidates, .. } = &state.mode {
         if !candidates.is_empty() {
             let rows: Vec<ListItem> = candidates.iter().map(|c| ListItem::new(c.as_str())).collect();
             frame.render_widget(List::new(rows).block(block.title(" Completions ")), area);
-            return;
+            return true;
         }
     }
     if let Mode::Pick { purpose, filter, sel } = &state.mode {
-        let kind = state.tab().kind().unwrap_or(ItemKind::Skill);
+        let kind = state.library_kind();
         let rows: Vec<ListItem> = state
             .choices(purpose, filter)
             .iter()
@@ -1398,57 +1581,21 @@ fn draw_body(frame: &mut Frame, state: &State, area: Rect) {
             PickFor::Import(_) => " Import ",
         };
         render_list(frame, area, block.title(title), rows, Some(*sel), &state.pick_scroll, None);
-        return;
+        return true;
     }
+    false
+}
+
+fn draw_body(frame: &mut Frame, state: &State, area: Rect) {
+    let block = Block::default().borders(Borders::ALL).border_style(border(state.focus == Focus::Body));
     let selected = (state.focus == Focus::Body).then_some(state.body_sel);
     // Name what the body shows, so a tick or an edit plainly acts on it (§17).
     let block = match state.row() {
-        Row::Profile(n) => block.title(format!(" profile {} ", n.as_str())),
-        Row::Kit(k) => block.title(format!(" kit {k} ")),
+        Row::Kit(k) => block.title(format!(" kit {k}: space picks ")),
         Row::Library(kind) => block.title(format!(" library · {} ", kind.dir())),
-        Row::ProfilesHeading | Row::KitsHeading => block,
     };
-    match (state.row(), state.tab()) {
-        (Row::Profile(_), Tab::Overview) => {
-            let p = match &state.overview {
-                Some(Ok(o)) => Paragraph::new(overview_lines(o)),
-                Some(Err(e)) => Paragraph::new(e.as_str()),
-                None => Paragraph::new(""),
-            };
-            frame.render_widget(p.block(block), area);
-        }
-        (Row::Profile(n), Tab::Kits) => {
-            if state.kits.is_empty() {
-                frame.render_widget(Paragraph::new("No kits yet: 2 for Kits, then n.").block(block), area);
-                return;
-            }
-            let mine = state.profiles.iter().find(|p| p.name == n).map(|p| p.kits.clone()).unwrap_or_default();
-            let rows: Vec<ListItem> =
-                state.kits.iter().map(|k| ListItem::new(tick(mine.contains(k), k))).collect();
-            let detail = selected.and_then(|i| state.kit_details.get(i)).map(Vec::as_slice).unwrap_or_default();
-            render_list(frame, area, block, with_detail(rows, selected, detail), selected, &state.body_scroll, None);
-        }
-        (Row::ProfilesHeading, _) => frame.render_widget(Paragraph::new(PROFILES_TEXT).block(block), area),
-        (Row::KitsHeading, _) => frame.render_widget(Paragraph::new(KITS_TEXT).block(block), area),
-        (Row::Kit(k), Tab::Profiles) => {
-            if state.profiles.is_empty() {
-                frame.render_widget(Paragraph::new("No profiles yet: n on ── profiles ── makes one").block(block), area);
-                return;
-            }
-            let rows: Vec<ListItem> = state
-                .profiles
-                .iter()
-                .map(|p| ListItem::new(tick(p.kits.contains(&k), p.name.as_str())))
-                .collect();
-            render_list(frame, area, block, rows, selected, &state.body_scroll, None);
-        }
-        (Row::Kit(_), Tab::Instructions) => {
-            let text = state.instructions.clone().unwrap_or_else(|| {
-                "No instructions yet; e writes them. They reach Claude as an appended system prompt, in every session that loads this kit.".into()
-            });
-            frame.render_widget(Paragraph::new(text).block(block), area);
-        }
-        (row, tab) => {
+    let (row, tab) = (state.row(), state.tab());
+    {
             let Some(kind) = tab.kind() else { return };
             let tree = state.visible_tree();
             if tree.is_empty() {
@@ -1491,7 +1638,6 @@ fn draw_body(frame: &mut Frame, state: &State, area: Rect) {
                 })
                 .collect();
             render_list(frame, area, block, rows, selected, &state.body_scroll, None);
-        }
     }
 }
 
@@ -1516,8 +1662,8 @@ fn map_key(code: KeyCode) -> Option<Key> {
 
 // ── The launch screen (ADR-2610261643 §10) ──────────────────────────────────
 
-/// What a bare `ccs` shows: a provider (profile) on the left, kits on the right.
-pub struct Picker {
+/// Home: a provider (profile) on the left, kits on the right.
+struct Picker {
     profiles: Vec<ProfileRow>,
     /// Every kit, with how many items it picks.
     kits: Vec<(String, usize)>,
@@ -1528,6 +1674,8 @@ pub struct Picker {
     focus: Focus,
     /// The kits to launch with, in order: the profile's own first.
     ticked: Vec<String>,
+    /// The selected profile's saved kits when `ticked` was set from them.
+    saved: Vec<String>,
     message: Option<String>,
     profile_scroll: Scroll,
     kit_scroll: Scroll,
@@ -1535,7 +1683,7 @@ pub struct Picker {
 
 impl Picker {
     /// `preselect` is the resolved profile, when there is one.
-    pub fn new(b: &dyn Browser, preselect: Option<&str>) -> Picker {
+    fn new(b: &dyn Browser, preselect: Option<&str>) -> Picker {
         let trees = KINDS.map(|kind| {
             let (items, folders) = b.library(kind);
             (kind, library_tree(&items, &folders))
@@ -1561,28 +1709,39 @@ impl Picker {
             kit_sel: 0,
             focus: Focus::List,
             ticked: vec![],
+            saved: vec![],
             message: None,
             profile_scroll: Scroll::default(),
             kit_scroll: Scroll::default(),
         };
         picker.tick_defaults();
-        if picker.profiles.is_empty() {
-            picker.message = Some("No profiles yet: ccs new <name>, or ccs import aws".into());
-        }
         picker
+    }
+
+    /// Read everything again, on the same profile and kit. The ticks follow the
+    /// profile's saved kits only when those changed (on its page, say).
+    fn reload(&mut self, b: &dyn Browser) {
+        let profile = self.profiles.get(self.sel).map(|p| p.name.as_str().to_string());
+        let kit = self.kits.get(self.kit_sel).map(|(k, _)| k.clone());
+        let fresh = Picker::new(b, profile.as_deref());
+        let (ticked, saved) = (std::mem::take(&mut self.ticked), std::mem::take(&mut self.saved));
+        let (focus, profile_scroll, kit_scroll) = (self.focus, std::mem::take(&mut self.profile_scroll), std::mem::take(&mut self.kit_scroll));
+        *self = Picker { focus, profile_scroll, kit_scroll, ..fresh };
+        self.kit_sel = kit.and_then(|k| self.kits.iter().position(|(n, _)| *n == k)).unwrap_or(0).min(self.kits.len().saturating_sub(1));
+        if self.profiles.get(self.sel).map(|p| p.name.as_str()) == profile.as_deref() && saved == self.saved {
+            self.ticked = ticked.into_iter().filter(|k| self.kits.iter().any(|(n, _)| n == k)).collect();
+        }
     }
 
     /// Tick the selected profile's own kits, as long as they exist.
     fn tick_defaults(&mut self) {
-        self.ticked = match self.profiles.get(self.sel) {
-            Some(p) => p.kits.iter().filter(|k| self.kits.iter().any(|(n, _)| n == *k)).cloned().collect(),
-            None => vec![],
-        };
+        self.saved = self.profiles.get(self.sel).map(|p| p.kits.clone()).unwrap_or_default();
+        self.ticked = self.saved.iter().filter(|k| self.kits.iter().any(|(n, _)| n == *k)).cloned().collect();
         self.kit_scroll.reveal(self.kits.iter().position(|(k, _)| self.ticked.contains(k)));
     }
 
-    /// Apply one key. `Some` ends the screen.
-    pub fn handle(&mut self, b: &dyn Browser, key: Key) -> Option<Exit> {
+    /// Apply one key. `Some` ends the TUI.
+    fn handle(&mut self, b: &dyn Browser, key: Key) -> Option<Exit> {
         self.message = None;
         match key {
             Key::Char('q') | Key::Esc => return Some(Exit::Quit),
@@ -1602,7 +1761,8 @@ impl Picker {
                     self.kit_sel = shifted(self.kit_sel, delta, self.kits.len());
                 }
             },
-            Key::Tab if !self.kits.is_empty() => {
+            // Even an empty kit list takes the focus: n there makes the first kit.
+            Key::Tab => {
                 self.focus = if self.focus == Focus::List { Focus::Body } else { Focus::List };
                 let ticked = self.kits.iter().position(|(k, _)| self.ticked.contains(k));
                 self.kit_sel = self.kit_scroll.in_view(ticked, self.kit_sel);
@@ -1635,9 +1795,8 @@ impl Picker {
     }
 }
 
-/// Paint the launch screen.
-pub fn draw_picker(frame: &mut Frame, p: &Picker) {
-    let [main, footer] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(frame.area());
+/// Paint Home, the launch screen.
+fn draw_home(frame: &mut Frame, main: Rect, p: &Picker) {
     let [left, right] = if main.width >= NARROW {
         Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(main)
     } else {
@@ -1645,7 +1804,7 @@ pub fn draw_picker(frame: &mut Frame, p: &Picker) {
     };
     let block = Block::default().borders(Borders::ALL).title(" Provider ").border_style(border(p.focus == Focus::List));
     if p.profiles.is_empty() {
-        frame.render_widget(Paragraph::new("No profiles yet.").block(block), left);
+        frame.render_widget(Paragraph::new("No profiles yet: n makes one, i imports your AWS profiles.").block(block), left);
     } else {
         let width = p.profiles.iter().map(|r| r.name.as_str().chars().count()).max().unwrap_or(0);
         let rows: Vec<ListItem> = p
@@ -1664,7 +1823,7 @@ pub fn draw_picker(frame: &mut Frame, p: &Picker) {
 
     let block = Block::default().borders(Borders::ALL).title(" Kits ").border_style(border(p.focus == Focus::Body));
     if p.kits.is_empty() {
-        frame.render_widget(Paragraph::new("No kits yet: ccs ui, 2 for Kits, then n").block(block), right);
+        frame.render_widget(Paragraph::new("No kits yet: tab here, then n makes one.").block(block), right);
     } else {
         let width = p.kits.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
         let rows: Vec<ListItem> = p
@@ -1680,15 +1839,6 @@ pub fn draw_picker(frame: &mut Frame, p: &Picker) {
         let detail = open.and_then(|i| p.details.get(i)).map(Vec::as_slice).unwrap_or_default();
         render_list(frame, right, block, with_detail(rows, open, detail), open, &p.kit_scroll, None);
     }
-
-    // What Enter starts, spelled as the command line would be (§17).
-    let launch = match p.profiles.get(p.sel) {
-        Some(r) => format!("⏎ launch {}{}", r.name.as_str(), p.ticked.iter().map(|k| format!(" +{k}")).collect::<String>()),
-        None => "⏎ launch".into(),
-    };
-    let hints = format!("{launch} · ↑↓ choose · tab switch · space tick a kit · s save kits as default · q quit");
-    let text = p.message.clone().unwrap_or(hints);
-    frame.render_widget(Paragraph::new(text).style(Style::default().fg(Color::DarkGray)), footer);
 }
 
 /// A full-screen view the run loop can drive.
@@ -1719,21 +1869,7 @@ impl Screen for State {
     }
 }
 
-impl Screen for Picker {
-    fn key(&mut self, b: &dyn Browser, key: Key) -> Option<Exit> {
-        self.handle(b, key)
-    }
-    fn paint(&self, frame: &mut Frame) {
-        draw_picker(frame, self)
-    }
-}
-
-/// The launch screen of a bare `ccs`. The terminal is restored before this returns.
-pub fn run_picker(b: &dyn Browser, preselect: Option<&str>) -> std::io::Result<Exit> {
-    drive(b, &mut Picker::new(b, preselect))
-}
-
-/// Take over the terminal until the user quits or picks a profile to launch.
+/// Home and its pages (ADR-2610261643 §18), until the user quits or launches.
 /// The terminal is restored before this returns, on every path.
 pub fn run(b: &dyn Browser) -> std::io::Result<Exit> {
     drive(b, &mut State::new(b))

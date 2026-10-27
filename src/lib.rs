@@ -128,7 +128,8 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
         claude_available,
         current,
     };
-    let ui = |current: Option<String>| -> Result<i32, CcsError> {
+    // Home and its pages (ADR-2610261643 §18); `args` go to claude on a launch.
+    let ui = |current: Option<String>, args: Vec<String>| -> Result<i32, CcsError> {
         if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
             return Err(CcsError::Usage("ccs ui needs a terminal".into()));
         }
@@ -137,11 +138,11 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             // The terminal is restored by now; launch exactly as `ccs <name>` does.
             tui::Exit::Launch(n) => {
                 let name = usecases::existing(&store, &n)?;
-                launch(&usecases::prepare_launch(&store, &kits, &lib, &name, None, vec![], &ccs_bin())?, &launcher)
+                launch(&usecases::prepare_launch(&store, &kits, &lib, &name, None, args, &ccs_bin())?, &launcher)
             }
             tui::Exit::LaunchWith { profile, kits: picked } => {
                 let name = usecases::existing(&store, &profile)?;
-                launch(&usecases::prepare_launch(&store, &kits, &lib, &name, Some(picked), vec![], &ccs_bin())?, &launcher)
+                launch(&usecases::prepare_launch(&store, &kits, &lib, &name, Some(picked), args, &ccs_bin())?, &launcher)
             }
             tui::Exit::Shell(n) => {
                 let plan = usecases::shell_plan(&store, &usecases::existing(&store, &n)?)?;
@@ -155,18 +156,11 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
     let command = parse_command(&args, |s| ProfileName::parse(s).is_ok_and(|n| usecases::existing(&store, n.as_str()).is_ok()))?;
     match command {
         Command::Launch { profile, kits: chosen, args } => {
-            // A bare `ccs` on a terminal chooses a provider and kits first (ADR-2610261643 §10);
+            // A bare `ccs` on a terminal opens Home, the start screen (ADR-2610261643 §18);
             // with nothing resolved it never falls back to ~/.claude (§5).
             if profile.is_none() && chosen.is_none() && std::io::stdout().is_terminal() && std::io::stdin().is_terminal() {
                 hint_migrate();
-                let resolved = resolve(None).ok().map(|n| n.as_str().to_string());
-                return match tui::run_picker(&app(resolved.clone()), resolved.as_deref()).map_err(|e| CcsError::Io(format!("terminal: {e}")))? {
-                    tui::Exit::LaunchWith { profile, kits: picked } => {
-                        let name = usecases::existing(&store, &profile)?;
-                        launch(&usecases::prepare_launch(&store, &kits, &lib, &name, Some(picked), args, &ccs_bin())?, &launcher)
-                    }
-                    _ => Ok(0),
-                };
+                return ui(resolve(None).ok().map(|n| n.as_str().to_string()), args);
             }
             let name = resolve(profile)?;
             launch(&usecases::prepare_launch(&store, &kits, &lib, &name, chosen, args, &ccs_bin())?, &launcher)
@@ -297,7 +291,7 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
         }
         Command::Ui => {
             hint_migrate();
-            ui(resolve(None).ok().map(|n| n.as_str().to_string()))
+            ui(resolve(None).ok().map(|n| n.as_str().to_string()), vec![])
         }
         Command::Library(cmd) => library_command(&lib, &kits, &editor(), &fetch, cmd),
         Command::Kit(cmd) => kit_command(&store, &kits, &lib, &editor(), cmd),

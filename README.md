@@ -77,7 +77,7 @@ from `/login` inside the profile.
 ## Usage
 
 ```
-ccs [claude args…]             the launch screen: choose a provider and kits, then ⏎
+ccs [claude args…]             Home: choose a profile and kits, then ⏎; e opens a page to change them
 ccs <profile> [+kit…] [args…]  start claude with <profile>; +kit replaces its kits for this run
 ccs list                       list profiles with their kits (* = resolved)
 ccs new <name> [--from <p>]    make a profile (copies variables, kits, settings; never login)
@@ -85,7 +85,7 @@ ccs default [<name>]           show or set the default profile
 ccs env [<name>]               print exports: eval "$(ccs env work)"
 ccs doctor [<name>]            check a profile and its kits; exits 1 on a failure
 ccs which                      print the resolved profile
-ccs ui                         the TUI: profiles, kits, the library; launch from the list
+ccs ui                         the same Home, from anywhere
 ccs statusline [-- <cmd…>]     status line segment; wraps an existing status line command
 ccs import                     copy ~/.claude skills, agents, CLAUDE.md into the library (kit 'imported')
 ccs import aws [<p>…] [--all] [--region <r>]
@@ -156,36 +156,26 @@ read an agent through a link, so an agent edit applies from the next launch),
 and the instructions are appended to the system prompt. In Claude Code a kit's
 skills are named `<kit>:<skill>`, for example `/net:find-nqe-query`.
 
-**The TUI.** `ccs ui` has a menu bar, `Profiles │ Kits │ Library`; `1` `2`
-`3` switch section, and each section keeps its place. The list is on the left
-and the selected row's tabs on the right; below 70 columns the list sits over
-them. Everything the CLI does to profiles, kits and the library, the TUI does
-too.
+**The TUI.** `ccs` (or `ccs ui`) opens Home, the launch screen. Every other
+screen is a page you open from it, and Esc goes back. The top line always says
+where you are and which profile is current:
+`ccs › claude-bedrock-gary › kit network › library        ⬡ claude-bedrock-gary +base`.
 
 ```
-1 Profiles  Overview · Kits     ⏎ launch · t shell in the profile's folder, with its variables
-                                n new (also on an empty section) · c copy (variables, kits, settings;
-                                never the login) · e edit profile.env · d default
-                                Kits tab: space attaches a kit
-2 Kits      Skills · Agents · Plugins · CLAUDE.md · Profiles
-                                n new kit · r rename · x delete (asks y/n)
-                                space pick: [x] picked, [·] picked by a folder above, [ ] not
-                                p show only what it picks · e edit (an item, or the kit's CLAUDE.md) · v view
-                                Profiles tab: space attaches the kit to a profile
-3 Library   skills · agents ·   space mark (●) · m move to a folder · + add to a kit (both pick from
-                                a list; type to filter, or type a new name) · x delete (asks y/n)
-                                a add from a path (Tab completes) · n new folder · r rename a folder
-                                e edit · v view · each row shows the kits that pick it: ‹network›
-            plugins             a add (owner/repo, a git URL, a path) · u update (all, from the list)
-everywhere  i import: ~/.claude, an AWS profile, every AWS profile, or migrate an old layout
-            ↑↓ move · PgUp/PgDn a page · Home/End (g/G) first/last · mouse wheel
-            ←→ tab · tab focus · / search · q quit
-            a list of ticks opens scrolled to its first ticked row
-            in a list of kits, the highlighted kit opens: its entries, item counts, CLAUDE.md
-            the left title names the current profile (ccs · ⬡ work); the right title what it shows
+Home           profiles and kits; ⏎ launch · space tick a kit · tab switch · s save the ticks as default
+               e open the profile or kit · n new (profile or kit, then it opens) · i import · l library
+a profile      ⏎ Launch · its kits (space adds or removes; the highlighted one shows what it holds;
+               ⏎ opens it) · Variables (⏎ edits profile.env) · default · copy · shell · folder, doctor
+a kit          what it holds, one line per entry with its count (space removes; ⏎ views or opens)
+               + Add from the library · CLAUDE.md (⏎ edits) · Used by (space switches) · rename · delete
+the library    from a kit: the tree with [x] picks for it (space picks, p picked only)
+               from Home (l): manage it: space mark · m move · + to kit · a add · n folder
+               r rename · x delete · e edit · v view · u update plugins
+everywhere     ←→ skills, agents, plugins (in the library) · ↑↓ PgUp/PgDn Home/End · / search
+               esc back · q quit
 ```
 
-See [ADR-2610261643 §8](docs/adrs/ADR-2610261643-logins-kits-library-sync.md).
+See [ADR-2610261643 §18](docs/adrs/ADR-2610261643-logins-kits-library-sync.md).
 
 **MCP servers.** Per profile: `ccs bedrock-work mcp add -s user forward -- forward-mcp`.
 Per kit: put a plugin-format `.mcp.json` in `~/.claude-profiles/kits/<kit>/`.

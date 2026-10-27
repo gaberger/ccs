@@ -404,6 +404,52 @@ row by the word `work`, which the new title also holds; it now looks for
 `▶ work`. Real run: `ccs ui` showed `ccs · ⬡ claude-bedrock-gary` and
 `profile claude-bedrock-gary`, then `kit base` after `2`.
 
+### 18. One start screen; drill in, Esc back (decided 2026-10-27; replaces §13)
+
+The user, of §13's sections: "this 1 2 3 screens is not a workflow this is
+still too confusing". Offered a start screen with pages, a task menu, or one
+page per profile, they chose the start screen.
+
+- **Home** is the launch screen (§10): profiles and kits; Enter starts Claude.
+  `ccs` and `ccs ui` both open it. `e` opens the highlighted profile or kit;
+  `n` makes one (a profile from the profile list, a kit from the kit list) and
+  opens it; `i` imports; `l` opens the library.
+- **A profile's page**: Launch; the kits it starts with (space switches one, Enter
+  opens it, the highlighted one shows what it holds); its variables (Enter
+  edits `profile.env`); make it the default; copy it; open a shell in its
+  folder; then its folder and the doctor's findings.
+- **A kit's page**: what it holds, one line per entry with its count (space
+  removes one; Enter views an item or opens the library at a folder); "+ Add
+  from the library"; its CLAUDE.md (Enter edits); the profiles that use it
+  (space switches); rename; delete.
+- **The library**, reached from a kit ("+ Add from the library": the tree with
+  `[x]` picks for that kit) or from Home (`l`: manage it, with every key of §9).
+  `←→` changes skills, agents, plugins.
+- **Esc goes back** one page; `q` quits from anywhere. The top line is a
+  breadcrumb, `ccs › claude-bedrock-gary › kit network › library`, and on its
+  right the current profile, `⬡ claude-bedrock-gary +base`. A page made with
+  `n` opens at once, since the next step is always to fill it.
+- Opening the library from a kit puts the cursor on the kit's first pick, so
+  what it holds is in view (as §16 does on Home).
+- An empty kit list still takes the focus, so `n` there makes the first kit.
+  Found by the test for that hint: Tab skipped an empty list, so the hint led
+  nowhere.
+- The menu bar, sections and `1 2 3` are gone. The profile Overview and Kits
+  tabs became the profile page; the kit's Skills, Agents, Plugins tabs became
+  the library picker; its CLAUDE.md and Profiles tabs became kit-page rows.
+
+§18 **done** (tests: `tests/tui.rs` rewritten around Home and its pages, 52;
+the library behaviours of §9, §11, §12 and §15 ported to the new way in).
+Injected bugs, each caught: Esc quitting from a page; the breadcrumb without
+the path; a new kit not opening; a copy stacking on its source; a deleted kit's
+page left open; a renamed kit's page keeping the old name; a profile page that
+could not switch a kit off (missed at first: the test only switched one on;
+extended); a kit entry space could not remove; Home's ticks not following a
+change made on the profile page; the library opening at the top. Real run
+(2026-10-27), `ccs` in a 130×30 pseudo-terminal on the user's setup: Home,
+`e` → the profile page, Esc, Tab `e` → kit base's page, Enter → the library
+picker, Esc Esc → Home, `q`.
+
 ## Consequences
 
 - Skills from a kit are named `<kit>:<skill>` in Claude Code. A skill invoked
