@@ -260,8 +260,9 @@ variables, `CLAUDE_CONFIG_DIR`, `CCS_PROFILE` and `CCS_KITS`, and put
 `--plugin-dir` for each kit in front of your arguments. Then it `exec`s
 `claude`, so there is no wrapper process left between you and Claude Code.
 
-The code is hexagonal, built with [hexa](https://github.com/gaberger/hexa). The
-gate is:
+The code is hexagonal, built with [hexa](https://github.com/gaberger/hexa); see
+[docs/architecture.md](docs/architecture.md) for the layers, ports and a launch
+end to end. The gate is:
 
 ```bash
 cargo test && hexa analyze . --grade A+
