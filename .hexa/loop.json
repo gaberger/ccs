@@ -17,7 +17,9 @@
         "docs/adrs/ADR-2610261643-logins-kits-library-sync.md",
         "README.md",
         "src/adapters/primary/tui.rs",
-        "tests/plugins.rs"
+        "tests/plugins.rs",
+        "docs/adrs/ADR-2610271000-release-and-upgrade.md",
+        "tests/upgrade.rs"
       ],
       "gate": "cargo test && hexa analyze . --grade A+ --exit-code",
       "pid": 65232,
@@ -49,7 +51,7 @@
           "title": "ccs sync over git"
         }
       ],
-      "updated": "2026-10-27T12:03:57.425144+00:00"
+      "updated": "2026-10-27T12:28:36.484469+00:00"
     },
     "a5898ad6-c8ae-4fce-9bb6-372f479aa638": {
       "adr": "ADR-2610261255",

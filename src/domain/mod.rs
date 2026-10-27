@@ -28,7 +28,7 @@ pub const PROVIDER_VARS: &[&str] = &[
 /// Words that are commands, retired commands, and ccs's own dirs. None can be a profile.
 const RESERVED: &[&str] = &[
     "list", "ls", "new", "import", "default", "env", "link", "doctor", "which", "help", "statusline", "skill", "skills",
-    "agent", "agents", "claude-md", "claudemd", "ui", "shared", "kit", "kits", "library", "lib", "migrate",
+    "agent", "agents", "claude-md", "claudemd", "ui", "shared", "kit", "kits", "library", "lib", "migrate", "upgrade", "version",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,6 +220,9 @@ pub enum Command {
     Statusline { wrap: Vec<String> },
     /// The status line a launch sets: the segment, then the project's or profile's own line.
     StatuslineAuto,
+    /// Install a release over the running binary; `check` only says what is available.
+    Upgrade { version: Option<String>, check: bool },
+    Version,
     ImportAws { profiles: Vec<String>, all: bool, region: Option<String> },
     /// Convert the layout earlier versions left (ADR-2610261643 §5).
     Migrate,
@@ -340,6 +343,13 @@ pub fn parse_command(args: &[String], is_profile: impl Fn(&str) -> bool) -> Resu
         }
         Some("link") => return Err(CcsError::Gone("ccs link is gone: kits are built at launch, so there is nothing to link".into())),
         Some("migrate") => Command::Migrate,
+        Some("version" | "--version" | "-V") => Command::Version,
+        Some("upgrade") => match &args[1..] {
+            [] => Command::Upgrade { version: None, check: false },
+            [c] if c == "--check" => Command::Upgrade { version: None, check: true },
+            [v] if parse_version(v).is_some() => Command::Upgrade { version: Some(v.trim_start_matches('v').into()), check: false },
+            _ => return Err(CcsError::Usage("ccs upgrade [--check | <version>]".into())),
+        },
         Some("which") => Command::Which,
         Some("ui") => Command::Ui,
         Some("help" | "-h" | "--help") => Command::Help,
@@ -959,6 +969,46 @@ pub fn statusline_dir(payload: &str) -> Option<String> {
         .filter(|d| !d.is_empty())
 }
 
+// ── Releases and `ccs upgrade` (ADR-2610271000) ─────────────────────────────
+
+/// The version this binary was built as.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `1.2.3` or `v1.2.3` as numbers; anything else is `None`.
+fn parse_version(v: &str) -> Option<[u64; 3]> {
+    let mut parts = v.trim().trim_start_matches('v').split('.').map(|p| p.parse::<u64>().ok());
+    let out = [parts.next()??, parts.next()??, parts.next()??];
+    parts.next().is_none().then_some(out)
+}
+
+/// Whether `a` is a later version than `b`. What cannot be read is never newer.
+pub fn newer_version(a: &str, b: &str) -> bool {
+    matches!((parse_version(a), parse_version(b)), (Some(x), Some(y)) if x > y)
+}
+
+/// The release target built for an OS and CPU (`std::env::consts`), if any.
+pub fn release_target(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        _ => None,
+    }
+}
+
+/// The archive a release holds for `target`.
+pub fn release_asset(version: &str, target: &str) -> String {
+    format!("ccs-{version}-{target}.tar.gz")
+}
+
+/// The SHA-256 that a `sha256sum` listing gives for exactly `file`.
+pub fn checksum_for(sums: &str, file: &str) -> Option<String> {
+    sums.lines().find_map(|l| {
+        let (sum, name) = l.split_once(char::is_whitespace)?;
+        (name.trim_start().trim_start_matches('*') == file).then(|| sum.to_lowercase())
+    })
+}
+
 /// `settings.json` for a fresh profile: the `ccs` status line, nothing else.
 pub fn default_settings(ccs_bin: &str) -> String {
     let command = format!("{} statusline", shell_quote(ccs_bin));
@@ -1070,6 +1120,8 @@ A launch is a profile plus kits. Nothing starts until you choose a profile.
   ccs import aws [<p>…] [--all] [--region <r>]
                                  list AWS CLI profiles, or import them as Bedrock profiles
   ccs migrate                    convert the shared/ and native layout of earlier versions
+  ccs upgrade [--check | <ver>]  install the latest release (or <ver>) over this ccs; needs gh
+  ccs version                    print the version
 
   ccs library list [skills|agents] | add <path> [--in <folder>] | mkdir skills/<folder>
               mv <entry> <folder|/> | rename skills/<folder>/ <name> | rm <entry> | show <entry> | edit <entry>

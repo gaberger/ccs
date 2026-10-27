@@ -24,9 +24,27 @@ your stock `~/.claude`. The decisions are in
 
 ## Prerequisites
 
-- Rust 1.88+ (`cargo`); `ratatui` is the one dependency
 - Claude Code (`claude` on your PATH), with `--plugin-dir`
-- macOS or Linux
+- macOS (Apple silicon or Intel) or Linux (x86_64) for a release; any Unix from source
+- From a release: the GitHub CLI, `gh`, logged in (the repository is private)
+- From source: Rust 1.88+ (`cargo`); `ratatui` is the one dependency
+
+## Install
+
+From a release, with no Rust needed:
+
+```bash
+gh release download --repo gaberger/ccs -p "ccs-*-$(uname -m | sed s/arm64/aarch64/)-$( [ "$(uname)" = Darwin ] && echo apple-darwin || echo unknown-linux-gnu).tar.gz" -O - | tar xz -C ~/.local/bin ccs
+ccs version
+```
+
+Then `ccs upgrade` keeps it current: it installs the latest release over itself,
+after checking the archive against the release's `SHA256SUMS.txt` and running
+the new binary once. `ccs upgrade --check` only says what is available;
+`ccs upgrade 0.1.0` installs that version. A tag `vX.Y.Z` builds and publishes
+a release; see [ADR-2610271000](docs/adrs/ADR-2610271000-release-and-upgrade.md).
+
+From source: `./start.sh --install`.
 
 ## Quick Start
 
@@ -73,6 +91,8 @@ ccs import                     copy ~/.claude skills, agents, CLAUDE.md into the
 ccs import aws [<p>…] [--all] [--region <r>]
                                list AWS CLI profiles, or import them as Bedrock profiles
 ccs migrate                    convert the shared/ and native layout of earlier versions
+ccs upgrade [--check | <ver>]  install the latest release (or <ver>) over this ccs
+ccs version                    print the version
 
 ccs library list [skills|agents|plugins] | add <path|owner/repo|git URL> [--in <folder>] | mkdir skills/<folder>
             mv <entry> <folder|/> | rename skills/<folder>/ <name> | rm <entry> | show <entry> | edit <entry>
@@ -219,13 +239,16 @@ src/
   adapters/secondary/fs_pins.rs        — finds .claude-profile
   adapters/secondary/exec_launcher.rs  — replaces the process with claude
   adapters/secondary/git_fetcher.rs    — clones and pulls plugins with git
+  adapters/secondary/gh_releases.rs    — downloads releases with gh; installs over the running binary
+  adapters/secondary/fs_text.rs        — reads settings files for the status line
   adapters/secondary/process_editor.rs — opens $VISUAL / $EDITOR
   adapters/secondary/process_runner.rs — runs a wrapped status line command
   adapters/secondary/aws_cli.rs        — AWS profile names and regions, via the aws CLI
   adapters/primary/tui.rs              — the ratatui TUI; talks to ports::Browser only
   lib.rs                               — composition root
   main.rs                              — entry point
-tests/                                 — the gate: domain, profiles, kits, migrate, the TUI, the real binary
+tests/                                 — the gate: domain, profiles, kits, plugins, migrate, upgrade, the TUI, the real binary
+.github/workflows/                     — CI (the gate on every push) and Release (on a vX.Y.Z tag)
 docs/adrs/                             — decisions
 start.sh                               — build and run, or --install
 ```
@@ -259,4 +282,6 @@ the TUI (a primary adapter) imports `ports/` only.
 | `CCS_CLAUDE_BIN` | Program to launch instead of `claude`. The tests use a script that prints its arguments. |
 | `CCS_AWS_BIN` | Program to run instead of `aws`. The tests use a fake. |
 | `CCS_GIT_BIN` | Program to run instead of `git`, for plugins. |
+| `CCS_GH_BIN` | Program to run instead of `gh`, for `ccs upgrade`. The tests use a fake. |
+| `CCS_REPO` | Where `ccs upgrade` looks for releases. Default `gaberger/ccs`. |
 | `VISUAL`, `EDITOR` | The editor `edit` and the TUI's `e` open. Default `vi`. |

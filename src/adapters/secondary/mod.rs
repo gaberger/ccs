@@ -12,6 +12,7 @@ pub mod fs_paths;
 pub mod fs_pins;
 pub mod fs_store;
 pub mod fs_text;
+pub mod gh_releases;
 pub mod git_fetcher;
 pub mod process_editor;
 pub mod process_runner;

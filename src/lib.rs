@@ -22,7 +22,7 @@ pub mod usecases;
 
 use adapters::secondary::{
     aws_cli::AwsCli, exec_launcher::ExecLauncher, fs_kits::FsKitStore, fs_legacy::FsLegacy, fs_library::FsLibrary,
-    fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, fs_text::FsText, git_fetcher::GitFetcher,
+    fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, fs_text::FsText, gh_releases::GhReleases, git_fetcher::GitFetcher,
     process_editor::ProcessEditor, process_runner::ProcessRunner,
 };
 use adapters::primary::tui;
@@ -244,6 +244,20 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
         }
         Command::Which => {
             println!("{}", resolve(None)?.as_str());
+            Ok(0)
+        }
+        Command::Version => {
+            println!("ccs {}", domain::VERSION);
+            Ok(0)
+        }
+        Command::Upgrade { version, check } => {
+            let rel = GhReleases::new(var("CCS_GH_BIN").unwrap_or_else(|| "gh".into()), var("CCS_REPO").unwrap_or_else(|| "gaberger/ccs".into()));
+            let target = domain::release_target(std::env::consts::OS, std::env::consts::ARCH);
+            match usecases::upgrade(&rel, domain::VERSION, target, version.as_deref(), check)? {
+                usecases::Upgraded::UpToDate(v) => println!("ccs {v} is up to date"),
+                usecases::Upgraded::Available { current, latest } => println!("ccs {latest} is available (this is {current}); install it with: ccs upgrade"),
+                usecases::Upgraded::Installed { from, to, at } => println!("✓ ccs {from} → {to} ({})", at.display()),
+            }
             Ok(0)
         }
         Command::StatuslineAuto => {

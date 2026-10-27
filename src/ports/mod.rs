@@ -125,6 +125,23 @@ pub trait Editor {
     fn edit(&self, path: &std::path::Path) -> Result<(), CcsError>;
 }
 
+/// Published releases of ccs, and putting one in place (ADR-2610271000).
+pub trait Releases {
+    /// The newest release's tag, like `v0.2.0`.
+    fn latest(&self) -> Result<String, CcsError>;
+    /// Download `assets` of release `tag` into a new folder. Returns the folder.
+    fn download(&self, tag: &str, assets: &[String]) -> Result<std::path::PathBuf, CcsError>;
+    fn read(&self, file: &std::path::Path) -> Result<String, CcsError>;
+    /// The file's SHA-256, lower-case hex.
+    fn sha256(&self, file: &std::path::Path) -> Result<String, CcsError>;
+    /// Unpack the `ccs` binary from an archive. Returns it.
+    fn unpack(&self, archive: &std::path::Path) -> Result<std::path::PathBuf, CcsError>;
+    /// Run `binary version`. Returns what it printed; an error when it did not run.
+    fn probe(&self, binary: &std::path::Path) -> Result<String, CcsError>;
+    /// Put `binary` in place of the running ccs, whole or not at all. Returns where.
+    fn install(&self, binary: &std::path::Path) -> Result<std::path::PathBuf, CcsError>;
+}
+
 /// Reads text files that may not exist: the settings a status line looks through.
 pub trait TextFiles {
     fn read(&self, path: &std::path::Path) -> Option<String>;

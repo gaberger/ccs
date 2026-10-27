@@ -4,13 +4,13 @@
 //! ports as parameters and never picks the adapter.
 
 use crate::domain::{
-    aws_profile_env, ccs_name_for_aws, git_source, launch_settings, next_statusline, settings_statusline, statusline_dir, check_env, compose_status, default_asset_name, default_settings, item_name,
+    aws_profile_env, ccs_name_for_aws, checksum_for, git_source, newer_version, release_asset, launch_settings, next_statusline, settings_statusline, statusline_dir, check_env, compose_status, default_asset_name, default_settings, item_name,
     kit_args, kit_name_for_profile, plan_launch, provider_label, rewrite_folder, render_exports, resolve, resolve_kit, status_segment, with_kits, AwsRow,
     CcsError, Finding, ImportOutcome, Kind, KitContents, KitName, LaunchPlan, LegacyItem, LibItem, LibraryRemoved,
     ListEntry, Overview, Profile, ProfileName, Use, Wrapped,
 };
 use crate::ports::{
-    AwsProfiles, Browser, CommandRunner, Editor, Fetcher, KitStore, TextFiles, Launcher, Legacy, Library, PathInput, PinLocator, ProfileStore,
+    AwsProfiles, Browser, CommandRunner, Editor, Fetcher, KitStore, Releases, TextFiles, Launcher, Legacy, Library, PathInput, PinLocator, ProfileStore,
 };
 use std::path::Path;
 
@@ -191,6 +191,48 @@ pub fn exports(store: &dyn ProfileStore, name: &ProfileName) -> Result<String, C
 }
 
 /// The status line (ADR-2610261237): the segment, in front of a wrapped command's output.
+/// What `ccs upgrade` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Upgraded {
+    UpToDate(String),
+    Available { current: String, latest: String },
+    Installed { from: String, to: String, at: std::path::PathBuf },
+}
+
+/// `ccs upgrade` (ADR-2610271000 §2): the latest release, or `wanted`, checked
+/// against `SHA256SUMS.txt` and run once before it replaces the running binary.
+pub fn upgrade(rel: &dyn Releases, current: &str, target: Option<&str>, wanted: Option<&str>, check: bool) -> Result<Upgraded, CcsError> {
+    let target = target.ok_or_else(|| {
+        CcsError::Usage("no release is built for this platform; build from source: ./start.sh --install".into())
+    })?;
+    let tag = match wanted {
+        Some(v) => format!("v{}", v.trim_start_matches('v')),
+        None => rel.latest()?,
+    };
+    let version = tag.trim_start_matches('v').to_string();
+    if wanted.is_none() && !newer_version(&version, current) {
+        return Ok(Upgraded::UpToDate(current.into()));
+    }
+    if check {
+        return Ok(Upgraded::Available { current: current.into(), latest: version });
+    }
+    let asset = release_asset(&version, target);
+    let dir = rel.download(&tag, &[asset.clone(), "SHA256SUMS.txt".into()])?;
+    let want = checksum_for(&rel.read(&dir.join("SHA256SUMS.txt"))?, &asset)
+        .ok_or_else(|| CcsError::Io(format!("SHA256SUMS.txt of {tag} has no line for {asset}; nothing installed")))?;
+    let got = rel.sha256(&dir.join(&asset))?;
+    if got != want {
+        return Err(CcsError::Io(format!("{asset}: checksum {got} is not the published {want}; nothing installed")));
+    }
+    let binary = rel.unpack(&dir.join(&asset))?;
+    let said = rel.probe(&binary).map_err(|e| CcsError::Io(format!("ccs {version}: {e}; nothing installed")))?;
+    if !said.contains(&version) {
+        return Err(CcsError::Io(format!("the downloaded ccs says '{said}', not {version}; nothing installed")));
+    }
+    let at = rel.install(&binary)?;
+    Ok(Upgraded::Installed { from: current.into(), to: version, at })
+}
+
 /// `ccs statusline --auto`, the status line every launch sets: the segment, then
 /// the first other status line of the project's local settings, its shared
 /// settings, or the profile's settings, run with the same stdin.
