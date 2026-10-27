@@ -2,6 +2,8 @@
 
 The EGM drift check (`egm_drift_report`, google/elephant-goldfish-model) over `docs/architecture.md`, `README.md` and the 10 ADRs in `docs/adrs/`, against `main` at `f27bbc2`. Each section lists only the differences.
 
+**Status: cleared, 2026-10-27.** The four program bugs were fixed in `c08796e` and shipped in v0.5.2. The document drift was fixed in `8908915` (README), `aff9120` (architecture.md) and `aba0841` (ADRs: status lines and dated notes; history is kept, not rewritten). The report below is the state before those fixes. One item is still open on purpose: ADR-2610261212's Keychain check was never recorded, and the ADR now says so.
+
 The four differences that are bugs in the program, not only in a document:
 
 1. `ccs --help` does not list plugins, `library add <owner/repo>` or `library update`.

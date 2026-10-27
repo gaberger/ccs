@@ -27,7 +27,8 @@
         "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/ship-a-feature-as-minor/with_skill/outputs/commands.md",
         "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/ship-a-feature-as-minor/without_skill/outputs/commands.md",
         "src/adapters/primary/tui.rs",
-        "docs/adrs/ADR-2610261643-logins-kits-library-sync.md"
+        "docs/adrs/ADR-2610261643-logins-kits-library-sync.md",
+        ".claude/worktrees/agent-a0699704097b8b387/docs/architecture.md"
       ],
       "gate": "cargo test && hexa analyze . --grade A+ --exit-code",
       "pid": 65232,
@@ -59,7 +60,7 @@
           "title": "ccs sync over git"
         }
       ],
-      "updated": "2026-10-27T20:28:11.093345+00:00"
+      "updated": "2026-10-27T20:53:06.537047+00:00"
     },
     "70ff75bc-cc22-4d38-9e36-5590bc1abf37": {
       "files": [

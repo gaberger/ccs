@@ -1,14 +1,16 @@
 //! ccs — Claude Code profile switcher (ADR-2610261212).
 //!
 //! `lib.rs` is the **composition root**: the only place allowed to name a
-//! concrete adapter, read the process environment, or print.
+//! concrete adapter, read configuration from the environment, or print.
+//! Adapters touch the environment only for their own mechanics (`PATH`,
+//! `temp_dir`, `current_exe`).
 //!
 //! ```text
 //!   domain  ←  ports  ←  usecases
 //!                ↑
 //!           adapters (secondary): FsProfileStore, FsPinLocator, ExecLauncher,
 //!                                 ProcessRunner, AwsCli, FsPathInput, ProcessEditor,
-//!                                 FsLibrary, FsKitStore, FsLegacy
+//!                                 FsLibrary, FsKitStore, FsLegacy, GitFetcher, GhReleases, FsText
 //!                ↑
 //!        lib.rs — wires them, once
 //! ```
@@ -58,12 +60,12 @@ pub fn path_input(home: PathBuf, cwd: PathBuf) -> impl ports::PathInput {
     FsPathInput::new(home, cwd)
 }
 
-/// The editor `ccs … edit` and the TUI's `e` open: `$VISUAL`, else `$EDITOR`, else `vi`.
 /// `git`, or `$CCS_GIT_BIN`.
 pub fn fetcher() -> impl ports::Fetcher {
     GitFetcher::new(var("CCS_GIT_BIN").unwrap_or_else(|| "git".into()))
 }
 
+/// The editor `ccs … edit` and the TUI's `e` open: `$VISUAL`, else `$EDITOR`, else `vi`.
 pub fn editor() -> impl ports::Editor {
     ProcessEditor::new(&var("VISUAL").or_else(|| var("EDITOR")).unwrap_or_else(|| "vi".into()))
 }
