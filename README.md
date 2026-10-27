@@ -162,8 +162,9 @@ where you are and which profile is current:
 `ccs › claude-bedrock-gary › kit network › library        ⬡ claude-bedrock-gary +base`.
 
 ```
-Home           profiles and kits; ⏎ launch · space tick a kit · tab switch · s save the ticks as default
-               e open the profile or kit · n new (profile or kit, then it opens) · i import · l library
+Home           1 · Choose a profile, 2 · Choose kits, 3 · ⏎ start; space ticks a kit · tab switches lists
+               each list ends with its actions: + New profile · ⇣ Import · ◆ Library · + New kit
+               → (or e) opens the profile or kit · s saves the ticks as its default
 a profile      ⏎ Launch · its kits (space adds or removes; the highlighted one shows what it holds;
                ⏎ opens it) · Variables (⏎ edits profile.env) · default · copy · shell · folder, doctor
 a kit          what it holds, one line per entry with its count (space removes; ⏎ views or opens)
@@ -172,7 +173,7 @@ the library    from a kit: the tree with [x] picks for it (space picks, p picked
                from Home (l): manage it: space mark · m move · + to kit · a add · n folder
                r rename · x delete · e edit · v view · u update plugins
 everywhere     ←→ skills, agents, plugins (in the library) · ↑↓ PgUp/PgDn Home/End · / search
-               esc back · q quit
+               ← or esc back (esc in the library) · q quit
 ```
 
 See [ADR-2610261643 §18](docs/adrs/ADR-2610261643-logins-kits-library-sync.md).

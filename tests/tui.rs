@@ -411,21 +411,19 @@ fn the_footer_says_what_enter_starts_and_what_else_home_does() {
     let b = Fake::new().current("work");
     let mut s = home(&b);
     let out = screen(&s);
-    assert!(out.contains("⏎ launch work +net"), "{out}");
-    for k in ["e open", "n new", "i import", "l library"] {
-        assert!(out.contains(k), "{k}:\n{out}");
-    }
+    assert!(out.contains("3 · ⏎ start work +net"), "{out}");
+    assert!(out.contains("→ open") && out.contains("space tick"), "{out}");
     press(&mut s, &b, &[Tab, Char(' ')]);
-    assert!(screen(&s).contains("⏎ launch work ·"), "net unticked: {}", screen(&s));
+    assert!(screen(&s).contains("3 · ⏎ start work ·"), "net unticked: {}", screen(&s));
 }
 
 #[test]
-fn with_no_profiles_home_says_n_makes_one_and_n_opens_the_new_profile() {
+fn with_no_profiles_home_starts_on_new_profile_and_it_opens_the_new_one() {
     let b = Fake::with(&[]);
     let mut s = home(&b);
-    assert!(screen(&s).contains("n makes one"), "{}", screen(&s));
-    assert_eq!(press(&mut s, &b, &[Enter]), None, "nothing to launch");
-    press(&mut s, &b, &[Char('n')]);
+    let out = screen(&s);
+    assert!(line_with(&out, "+ New profile").contains('▶') && !out.contains("make a profile first"), "the first row is the first step:\n{out}");
+    press(&mut s, &b, &[Enter]);
     assert!(screen(&s).contains("New profile name:"), "{}", screen(&s));
     typed(&mut s, &b, "zed");
     press(&mut s, &b, &[Enter]);
@@ -990,7 +988,7 @@ fn home_pages_too_and_scrolls_to_a_ticked_kit() {
     let b = Fake::new();
     let mut s = home(&b);
     press(&mut s, &b, &[End]);
-    assert!(screen(&s).contains("▶ work"));
+    assert!(screen(&s).contains("▶ ◆ Library"), "the last row is the last action:\n{}", screen(&s));
     press(&mut s, &b, &[Home]);
     assert!(screen(&s).contains("▶ lab"));
     // With many_kits(30) the kits are eng, k00…k29, net: work's net is row 32.
@@ -1022,10 +1020,73 @@ fn a_narrow_terminal_stacks_home_and_cuts_nothing() {
 #[test]
 fn with_no_kits_home_and_a_profile_page_say_how_to_make_one() {
     let b = Fake::new().no_kits();
-    assert!(screen(&home(&b)).contains("No kits yet: tab here, then n"), "{}", screen(&home(&b)));
+    assert!(screen(&home(&b)).contains("+ New kit"), "{}", screen(&home(&b)));
     let mut s = home(&b);
-    press(&mut s, &b, &[Tab, Char('n')]);
+    press(&mut s, &b, &[Tab, Enter]);
     assert!(screen(&s).contains("New kit name:"), "the hint works:\n{}", screen(&s));
     let out = screen(&work_page(&b));
     assert!(out.contains("no kits yet: on Home, tab to the kits and press n"), "{out}");
+}
+
+// ── The workflow is on the screen (§19) ──────────────────────────────────────
+
+#[test]
+fn home_shows_its_steps_and_actions_as_rows() {
+    let b = Fake::new().current("work");
+    let out = screen(&home(&b));
+    for want in ["1 · Choose a profile", "2 · Choose kits", "+ New profile", "⇣ Import", "◆ Library", "+ New kit", "3 · ⏎ start work +net"] {
+        assert!(out.contains(want), "missing {want:?}:\n{out}");
+    }
+    assert!(line_with(&out, "▶ work").contains('›'), "a profile shows it opens:\n{out}");
+}
+
+#[test]
+fn enter_on_an_action_row_does_the_action() {
+    let b = Fake::new();
+    let mut s = home(&b);
+    press(&mut s, &b, &[Down, Down, Enter]);
+    assert!(screen(&s).contains("New profile name:"), "{}", screen(&s));
+    press(&mut s, &b, &[Esc, Down, Enter]);
+    assert!(screen(&s).contains("aws dev"), "import:\n{}", screen(&s));
+    press(&mut s, &b, &[Esc, Down, Enter]);
+    assert!(crumb(&screen(&s)).contains("ccs › library"), "{}", screen(&s));
+    let mut s = home(&b);
+    press(&mut s, &b, &[Tab, End, Enter]);
+    assert!(screen(&s).contains("New kit name:"), "the kit list's action:\n{}", screen(&s));
+}
+
+#[test]
+fn an_action_row_keeps_the_ticks_and_launches_nothing() {
+    let b = Fake::new().current("work");
+    let mut s = home(&b);
+    press(&mut s, &b, &[Down, Char(' '), Char('s')]);
+    let out = screen(&s);
+    assert!(out.contains("[x] net") && out.contains("⏎ + New profile"), "the footer says what Enter does here:\n{out}");
+    press(&mut s, &b, &[Up]);
+    assert!(screen(&s).contains("3 · ⏎ start work +net"), "{}", screen(&s));
+    assert!(b.called().is_empty(), "space and s do nothing on an action");
+}
+
+#[test]
+fn right_opens_a_profile_or_kit_and_left_comes_back() {
+    let b = Fake::new().current("work");
+    let mut s = home(&b);
+    press(&mut s, &b, &[Right]);
+    assert!(crumb(&screen(&s)).contains("ccs › work"), "{}", screen(&s));
+    press(&mut s, &b, &[Down, Down, Right]);
+    assert!(crumb(&screen(&s)).contains("ccs › work › kit net"), "→ on a kit row opens it:\n{}", screen(&s));
+    press(&mut s, &b, &[Left, Left]);
+    assert!(!crumb(&screen(&s)).contains('›'), "← walks back:\n{}", screen(&s));
+    press(&mut s, &b, &[Tab, Right]);
+    assert!(crumb(&screen(&s)).contains("ccs › kit net"), "{}", screen(&s));
+}
+
+#[test]
+fn a_tick_survives_a_visit_to_an_action_row() {
+    let b = Fake::new().current("work");
+    let mut s = home(&b);
+    screen(&s);
+    press(&mut s, &b, &[Tab, Up, Char(' '), Tab, Down, Up]);
+    let out = screen(&s);
+    assert!(out.contains("[x] eng") && out.contains("3 · ⏎ start work +net +eng"), "{out}");
 }

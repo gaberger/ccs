@@ -736,18 +736,23 @@ impl State {
 
     fn home_key(&mut self, b: &dyn Browser, key: Key) -> Option<Exit> {
         let on_kits = self.home.focus == Focus::Body;
+        let profile = (!on_kits).then(|| self.home.profile().map(|p| p.name.clone())).flatten();
+        let kit = on_kits.then(|| self.home.kit().map(String::from)).flatten();
         match key {
-            Key::Char('e') => match (on_kits, self.home.kits.get(self.home.kit_sel), self.home.profiles.get(self.home.sel)) {
-                (true, Some((k, _)), _) => {
-                    let k = k.clone();
-                    self.push(b, Page::Kit(k));
-                }
-                (false, _, Some(p)) => {
-                    let n = p.name.clone();
-                    self.push(b, Page::Profile(n));
-                }
+            // The rows past the lists are the workflow's actions (§19).
+            Key::Enter if !on_kits && self.home.action().is_some() => match self.home.action() {
+                Some(HomeAction::NewProfile) => self.input(Purpose::NewProfile { from: None }),
+                Some(HomeAction::Import) => self.ask_import(b),
+                Some(HomeAction::Library) | None => self.open_library(b, None, ItemKind::Skill),
+            },
+            Key::Enter if on_kits && kit.is_none() => self.input(Purpose::NewKit),
+            Key::Char(' ' | 's') if self.home.action().is_some() && !on_kits => {}
+            Key::Right | Key::Char('e') => match (profile, kit) {
+                (Some(n), _) => self.push(b, Page::Profile(n)),
+                (_, Some(k)) => self.push(b, Page::Kit(k)),
                 _ => {}
             },
+            Key::Left => {}
             Key::Char('n') if on_kits => self.input(Purpose::NewKit),
             Key::Char('n') => self.input(Purpose::NewProfile { from: None }),
             Key::Char('i') => self.ask_import(b),
@@ -773,7 +778,12 @@ impl State {
         let row = rows.get(self.page_sel()).cloned().unwrap_or(ProfileItem::Launch);
         let attached = |s: &State, k: &str| s.profiles.iter().any(|p| p.name == n && p.kits.iter().any(|x| x == k));
         match key {
-            Key::Esc => self.pop(b),
+            Key::Esc | Key::Left => self.pop(b),
+            Key::Right => {
+                if let ProfileItem::Kit(k) = row {
+                    self.push(b, Page::Kit(k));
+                }
+            }
             Key::Char('q') => return Some(Exit::Quit),
             k if movement(k, 0).is_some() => self.move_page(k, rows.len()),
             Key::Char(' ') => {
@@ -824,7 +834,7 @@ impl State {
             s.refresh(b);
         };
         match key {
-            Key::Esc => self.pop(b),
+            Key::Esc | Key::Left => self.pop(b),
             Key::Char('q') => return Some(Exit::Quit),
             k if movement(k, 0).is_some() => self.move_page(k, rows.len()),
             Key::Char(' ') => match &row {
@@ -1271,15 +1281,20 @@ impl State {
     fn hints(&self) -> String {
         match self.page() {
             None => {
-                // What Enter starts, spelled as the command line would be (§17).
-                let launch = match self.home.profiles.get(self.home.sel) {
-                    Some(r) => format!("⏎ launch {}{}", r.name.as_str(), self.home.ticked.iter().map(|k| format!(" +{k}")).collect::<String>()),
-                    None => "n makes one".into(),
-                };
-                format!("{launch} · space tick · tab switch · e open · n new · i import · l library · s save · q quit")
+                let h = &self.home;
+                let other = if h.focus == Focus::List { "tab kits" } else { "tab profiles" };
+                match (h.focus, h.action(), h.kit()) {
+                    (Focus::List, Some(a), _) => format!("⏎ {} · ↑↓ choose · {other} · q quit", a.label()),
+                    (Focus::Body, _, None) => format!("⏎ + New kit · ↑↓ choose · {other} · q quit"),
+                    _ => match h.launch_line() {
+                        // Step 3: what Enter starts, spelled as the command line would be (§17).
+                        Some(l) => format!("3 · ⏎ start {l} · → open · space tick · {other} · s save · q quit"),
+                        None => format!("3 · ⏎ start: make a profile first · {other} · q quit"),
+                    },
+                }
             }
-            Some(Page::Profile(_)) => "⏎ choose · space adds or removes a kit · e edit · esc back · q quit".into(),
-            Some(Page::Kit(_)) => "⏎ choose · space removes an entry or switches a profile · esc back · q quit".into(),
+            Some(Page::Profile(_)) => "⏎ choose · space adds or removes a kit · → open a kit · ← back · q quit".into(),
+            Some(Page::Kit(_)) => "⏎ choose · space removes an entry or switches a profile · ← back · q quit".into(),
             Some(Page::Library { kit: Some(_) }) => "space pick · p picked only · ←→ skills, agents, plugins · / search · v view · e edit · esc back".into(),
             Some(Page::Library { kit: None }) if self.library_kind() == ItemKind::Plugin => {
                 "a add (owner/repo) · u update · + to kit · x delete · v view · / search · ←→ kind · esc back".into()
@@ -1660,21 +1675,46 @@ fn map_key(code: KeyCode) -> Option<Key> {
     })
 }
 
-// ── The launch screen (ADR-2610261643 §10) ──────────────────────────────────
+// ── Home, the launch screen (ADR-2610261643 §10, §19) ───────────────────────
 
-/// Home: a provider (profile) on the left, kits on the right.
+/// What the profile list offers below the profiles: the workflow, on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HomeAction {
+    NewProfile,
+    Import,
+    Library,
+}
+
+const HOME_ACTIONS: [HomeAction; 3] = [HomeAction::NewProfile, HomeAction::Import, HomeAction::Library];
+
+impl HomeAction {
+    fn label(self) -> &'static str {
+        match self {
+            HomeAction::NewProfile => "+ New profile",
+            HomeAction::Import => "⇣ Import (AWS profiles, ~/.claude)",
+            HomeAction::Library => "◆ Library: skills, agents, plugins",
+        }
+    }
+}
+
+/// Home: step 1, a profile, on the left; step 2, its kits, on the right;
+/// step 3, Enter. Each list ends with its actions.
 struct Picker {
     profiles: Vec<ProfileRow>,
     /// Every kit, with how many items it picks.
     kits: Vec<(String, usize)>,
     /// What each kit holds, as `kit_detail` lines, in `kits` order.
     details: Vec<Vec<String>>,
+    /// A profile, or past them, one of `HOME_ACTIONS`.
     sel: usize,
+    /// A kit, or past them, "+ New kit".
     kit_sel: usize,
     focus: Focus,
     /// The kits to launch with, in order: the profile's own first.
     ticked: Vec<String>,
-    /// The selected profile's saved kits when `ticked` was set from them.
+    /// The profile the ticks belong to: the last one the cursor was on.
+    ticks_for: Option<Name>,
+    /// That profile's saved kits when `ticked` was set from them.
     saved: Vec<String>,
     message: Option<String>,
     profile_scroll: Scroll,
@@ -1709,6 +1749,7 @@ impl Picker {
             kit_sel: 0,
             focus: Focus::List,
             ticked: vec![],
+            ticks_for: None,
             saved: vec![],
             message: None,
             profile_scroll: Scroll::default(),
@@ -1718,24 +1759,47 @@ impl Picker {
         picker
     }
 
-    /// Read everything again, on the same profile and kit. The ticks follow the
-    /// profile's saved kits only when those changed (on its page, say).
+    /// The profile under the cursor; `None` on an action row.
+    fn profile(&self) -> Option<&ProfileRow> {
+        self.profiles.get(self.sel)
+    }
+
+    /// The action under the cursor, on the profile list.
+    fn action(&self) -> Option<HomeAction> {
+        self.sel.checked_sub(self.profiles.len()).and_then(|i| HOME_ACTIONS.get(i).copied())
+    }
+
+    /// The kit under the cursor; `None` on "+ New kit".
+    fn kit(&self) -> Option<&str> {
+        self.kits.get(self.kit_sel).map(|(k, _)| k.as_str())
+    }
+
+    /// Read everything again, on the same rows. The ticks follow their profile's
+    /// saved kits only when those changed (on its page, say).
     fn reload(&mut self, b: &dyn Browser) {
-        let profile = self.profiles.get(self.sel).map(|p| p.name.as_str().to_string());
-        let kit = self.kits.get(self.kit_sel).map(|(k, _)| k.clone());
-        let fresh = Picker::new(b, profile.as_deref());
+        let (old_profiles, old_sel) = (self.profiles.len(), self.sel);
+        let kit = self.kit().map(String::from);
+        let fresh = Picker::new(b, self.ticks_for.as_ref().map(Name::as_str));
         let (ticked, saved) = (std::mem::take(&mut self.ticked), std::mem::take(&mut self.saved));
         let (focus, profile_scroll, kit_scroll) = (self.focus, std::mem::take(&mut self.profile_scroll), std::mem::take(&mut self.kit_scroll));
         *self = Picker { focus, profile_scroll, kit_scroll, ..fresh };
-        self.kit_sel = kit.and_then(|k| self.kits.iter().position(|(n, _)| *n == k)).unwrap_or(0).min(self.kits.len().saturating_sub(1));
-        if self.profiles.get(self.sel).map(|p| p.name.as_str()) == profile.as_deref() && saved == self.saved {
+        if let Some(i) = old_sel.checked_sub(old_profiles) {
+            self.sel = self.profiles.len() + i;
+        }
+        self.kit_sel = match kit {
+            Some(k) => self.kits.iter().position(|(n, _)| *n == k).unwrap_or(0),
+            None => self.kits.len(),
+        };
+        if saved == self.saved {
             self.ticked = ticked.into_iter().filter(|k| self.kits.iter().any(|(n, _)| n == k)).collect();
         }
     }
 
     /// Tick the selected profile's own kits, as long as they exist.
     fn tick_defaults(&mut self) {
-        self.saved = self.profiles.get(self.sel).map(|p| p.kits.clone()).unwrap_or_default();
+        let Some((name, kits)) = self.profile().map(|p| (p.name.clone(), p.kits.clone())) else { return };
+        self.ticks_for = Some(name);
+        self.saved = kits;
         self.ticked = self.saved.iter().filter(|k| self.kits.iter().any(|(n, _)| n == *k)).cloned().collect();
         self.kit_scroll.reveal(self.kits.iter().position(|(k, _)| self.ticked.contains(k)));
     }
@@ -1747,98 +1811,111 @@ impl Picker {
             Key::Char('q') | Key::Esc => return Some(Exit::Quit),
             k if movement(k, 0).is_some() => match self.focus {
                 Focus::List => {
+                    let len = self.profiles.len() + HOME_ACTIONS.len();
                     let delta = movement(k, self.profile_scroll.page.get()).unwrap_or(0);
-                    self.profile_scroll.follow(k, delta, self.profiles.len());
-                    let to = shifted(self.sel, delta, self.profiles.len());
-                    if to != self.sel {
-                        self.sel = to;
+                    self.profile_scroll.follow(k, delta, len);
+                    self.sel = shifted(self.sel, delta, len);
+                    // An action row keeps the ticks; another profile brings its own.
+                    if self.profile().is_some_and(|p| Some(&p.name) != self.ticks_for.as_ref()) {
                         self.tick_defaults();
                     }
                 }
                 Focus::Body => {
+                    let len = self.kits.len() + 1;
                     let delta = movement(k, self.kit_scroll.page.get()).unwrap_or(0);
-                    self.kit_scroll.follow(k, delta, self.kits.len());
-                    self.kit_sel = shifted(self.kit_sel, delta, self.kits.len());
+                    self.kit_scroll.follow(k, delta, len);
+                    self.kit_sel = shifted(self.kit_sel, delta, len);
                 }
             },
-            // Even an empty kit list takes the focus: n there makes the first kit.
             Key::Tab => {
                 self.focus = if self.focus == Focus::List { Focus::Body } else { Focus::List };
                 let ticked = self.kits.iter().position(|(k, _)| self.ticked.contains(k));
                 self.kit_sel = self.kit_scroll.in_view(ticked, self.kit_sel);
             }
             Key::Char(' ') if self.focus == Focus::Body => {
-                if let Some((k, _)) = self.kits.get(self.kit_sel) {
-                    if !self.ticked.contains(k) {
-                        self.ticked.push(k.clone());
+                if let Some(k) = self.kit().map(String::from) {
+                    if !self.ticked.contains(&k) {
+                        self.ticked.push(k);
                     } else {
-                        self.ticked.retain(|t| t != k);
+                        self.ticked.retain(|t| *t != k);
                     }
                 }
             }
             Key::Char('s') => {
-                let p = self.profiles.get(self.sel).map(|p| p.name.clone())?;
+                let p = self.profile().map(|p| p.name.clone())?;
                 self.message = Some(match b.set_kits(&p, &self.ticked) {
                     Ok(()) if self.ticked.is_empty() => format!("{} now starts with no kits", p.as_str()),
                     Ok(()) => format!("{} now starts with {}", p.as_str(), self.ticked.iter().map(|k| format!("+{k}")).collect::<Vec<_>>().join(" ")),
                     Err(e) => e.to_string(),
                 });
                 self.profiles = b.profiles();
+                self.saved = self.ticked.clone();
             }
             Key::Enter => {
-                let p = self.profiles.get(self.sel)?;
-                return Some(Exit::LaunchWith { profile: p.name.as_str().into(), kits: self.ticked.clone() });
+                let p = self.ticks_for.clone()?;
+                return Some(Exit::LaunchWith { profile: p.as_str().into(), kits: self.ticked.clone() });
             }
             _ => {}
         }
         None
     }
+
+    /// What Enter starts, spelled as the command line would be (§17).
+    fn launch_line(&self) -> Option<String> {
+        let p = self.ticks_for.as_ref()?;
+        Some(format!("{}{}", p.as_str(), self.ticked.iter().map(|k| format!(" +{k}")).collect::<String>()))
+    }
 }
 
-/// Paint Home, the launch screen.
+/// Paint Home: the three steps, each list ending with its actions.
 fn draw_home(frame: &mut Frame, main: Rect, p: &Picker) {
     let [left, right] = if main.width >= NARROW {
         Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(main)
     } else {
         Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(main)
     };
-    let block = Block::default().borders(Borders::ALL).title(" Provider ").border_style(border(p.focus == Focus::List));
-    if p.profiles.is_empty() {
-        frame.render_widget(Paragraph::new("No profiles yet: n makes one, i imports your AWS profiles.").block(block), left);
-    } else {
-        let width = p.profiles.iter().map(|r| r.name.as_str().chars().count()).max().unwrap_or(0);
-        let rows: Vec<ListItem> = p
-            .profiles
-            .iter()
-            .map(|r| {
-                ListItem::new(Line::from(vec![
-                    Span::raw(format!("{:width$}  ", r.name.as_str())),
-                    Span::styled(r.provider.clone(), Style::default().fg(Color::Cyan)),
-                    Span::styled(if r.is_default { "  (default)" } else { "" }, Style::default().fg(Color::DarkGray)),
-                ]))
-            })
-            .collect();
-        render_list(frame, left, block, rows, Some(p.sel), &p.profile_scroll, Some("▶ "));
-    }
+    let opens = || Span::styled("  ›", Style::default().fg(Color::DarkGray));
+    let action = |text: &str| ListItem::new(Span::styled(text.to_string(), Style::default().fg(Color::Green)));
 
-    let block = Block::default().borders(Borders::ALL).title(" Kits ").border_style(border(p.focus == Focus::Body));
-    if p.kits.is_empty() {
-        frame.render_widget(Paragraph::new("No kits yet: tab here, then n makes one.").block(block), right);
-    } else {
-        let width = p.kits.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
-        let rows: Vec<ListItem> = p
-            .kits
-            .iter()
-            .map(|(k, n)| {
-                let mut line = tick(p.ticked.contains(k), &format!("{k:width$}  "));
-                line.spans.push(Span::styled(n.to_string(), Style::default().fg(Color::DarkGray)));
-                ListItem::new(line)
-            })
-            .collect();
-        let open = (p.focus == Focus::Body).then_some(p.kit_sel);
-        let detail = open.and_then(|i| p.details.get(i)).map(Vec::as_slice).unwrap_or_default();
-        render_list(frame, right, block, with_detail(rows, open, detail), open, &p.kit_scroll, None);
-    }
+    let block = Block::default().borders(Borders::ALL).title(" 1 · Choose a profile ").border_style(border(p.focus == Focus::List));
+    let width = p.profiles.iter().map(|r| r.name.as_str().chars().count()).max().unwrap_or(0);
+    let mut rows: Vec<ListItem> = p
+        .profiles
+        .iter()
+        .map(|r| {
+            // The › sits by the name, so a long provider never pushes it out of sight.
+            ListItem::new(Line::from(vec![
+                Span::raw(format!("{:width$}", r.name.as_str())),
+                opens(),
+                Span::raw("  "),
+                Span::styled(r.provider.clone(), Style::default().fg(Color::Cyan)),
+                Span::styled(if r.is_default { "  (default)" } else { "" }, Style::default().fg(Color::DarkGray)),
+            ]))
+        })
+        .collect();
+    rows.extend(HOME_ACTIONS.iter().map(|a| action(a.label())));
+    render_list(frame, left, block, rows, Some(p.sel), &p.profile_scroll, Some("▶ "));
+
+    let title = match &p.ticks_for {
+        Some(n) => format!(" 2 · Choose kits for {} ", n.as_str()),
+        None => " 2 · Choose kits ".into(),
+    };
+    let block = Block::default().borders(Borders::ALL).title(title).border_style(border(p.focus == Focus::Body));
+    let width = p.kits.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
+    let mut rows: Vec<ListItem> = p
+        .kits
+        .iter()
+        .map(|(k, n)| {
+            let mut line = tick(p.ticked.contains(k), &format!("{k:width$}  "));
+            line.spans.push(Span::styled(format!("{n:>3}"), Style::default().fg(Color::DarkGray)));
+            line.spans.push(opens());
+            ListItem::new(line)
+        })
+        .collect();
+    rows.push(action("+ New kit"));
+    let open = (p.focus == Focus::Body).then_some(p.kit_sel);
+    let detail = open.and_then(|i| p.details.get(i)).map(Vec::as_slice).unwrap_or_default();
+    render_list(frame, right, block, with_detail(rows, open, detail), open, &p.kit_scroll, Some("▶ "));
 }
 
 /// A full-screen view the run loop can drive.

@@ -450,6 +450,30 @@ change made on the profile page; the library opening at the top. Real run
 `e` → the profile page, Esc, Tab `e` → kit base's page, Enter → the library
 picker, Esc Esc → Home, `q`.
 
+### 19. The workflow is on the screen (decided 2026-10-27)
+
+The user, after §18 shipped as 0.3.0: "you did nothing for the workflow". They
+were right: Home looked exactly like the old launch screen. The pages of §18
+opened only through keys named in a grey footer, so nothing on screen showed
+a next step.
+
+- Home's lists are numbered steps: `1 · Choose a profile`, `2 · Choose kits for
+  <profile>`, and the footer begins `3 · ⏎ start <profile> +kits`.
+- Each list ends with its actions, as rows the cursor reaches and Enter runs:
+  `+ New profile`, `⇣ Import (AWS profiles, ~/.claude)`, `◆ Library`, and
+  `+ New kit`. With no profiles, the cursor starts on `+ New profile`.
+- A profile or kit row ends with `›`; `→` opens its page, `←` (or Esc) comes
+  back. In the library `←→` still change the kind, so Esc is its way back.
+- An action row keeps the ticks: they belong to the last profile the cursor was
+  on, and the footer says what Enter does on the row it is on.
+
+**Done** (tests: 5 more in `tests/tui.rs`). Injected bugs, each caught: Enter on
+an action doing nothing; `→` not opening; `←` not going back; the ticks reset
+by a visit to an action row (missed at first: no test ticked before the visit;
+added). Real run: a 104×18 capture of `ccs` on the user's setup showed the
+steps, the five profile rows and actions, six kits and `+ New kit`; `→` opened
+the profile page; Tab, Down×4, `→` opened kit network's page.
+
 ## Consequences
 
 - Skills from a kit are named `<kit>:<skill>` in Claude Code. A skill invoked
