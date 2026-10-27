@@ -85,6 +85,18 @@ above project settings.
 in this repository showed `⬡ claude-bedrock-gary +base · bedrock
 claude-bedrock-gary@us-east-1 │ ⬡ Loop (ccs): nothing recorded…`.
 
+## Later changes (2026-10-27)
+
+- **Kits in the segment.** The segment is now `⬡ <profile> +<kit>… ·
+  <provider>`: one `+kit` per name in `CCS_KITS`, which a launch with kits
+  exports. ADR-2610261643 §4 decided it ("The status line segment names the
+  kits"); Decision 1 above predates kits. Code: `status_segment` in
+  `src/domain/mod.rs`.
+- **Where `--auto` finds the project.** §2 says the project folder comes from
+  `workspace.project_dir`. The code falls back to `workspace.current_dir`, then
+  to the payload's top-level `cwd` (`statusline_dir` in `src/domain/mod.rs`).
+  No ADR records that fallback; this note does.
+
 ## References
 
 - ADR-2610261212 — one config directory per profile
