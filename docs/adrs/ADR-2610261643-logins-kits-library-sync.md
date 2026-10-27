@@ -474,6 +474,34 @@ added). Real run: a 104×18 capture of `ccs` on the user's setup showed the
 steps, the five profile rows and actions, six kits and `+ New kit`; `→` opened
 the profile page; Tab, Down×4, `→` opened kit network's page.
 
+### 20. The mouse (decided 2026-10-27)
+
+The user: "i still have a hard time navigating with my keyboard, can i use a
+mouse". The TUI already captured the mouse for the wheel (§11).
+
+- A click selects a row; a click on the selected row does what Enter does
+  there: opens a profile or kit, runs an action, views an item, chooses in a
+  picker. On Home a profile opens; it never launches, so a stray double click
+  cannot start a session.
+- A click on a `[ ]` box ticks it, as space does: a kit on Home, a kit on a
+  profile page, a profile on a kit page, a pick or mark in the library.
+- A click on `3 · ⏎ start …` launches; on a breadcrumb part, returns to that
+  page; on a library kind (`Skills (3)`), shows it.
+- A right click goes back one page, and on Home does nothing: it never quits.
+- Each frame records where it drew its lists, boxes and buttons; a click asks
+  what is there. A list records, per line, its row (or none, for a label or a
+  kit's detail lines) and whether the row has a box, and the column its boxes
+  start at: 2 with the `▶ ` margin, 0 without, since a list without the cursor
+  draws no margin.
+
+**Done** (tests: 8 in `tests/tui.rs`, clicking where the text is drawn).
+Found by them: a box sat at column 0, not 2, in a list without the cursor; and
+the first columns of every row counted as a box, so "Copy to a new profile"
+could not be clicked. Injected bugs, each caught: a second click doing nothing;
+boxes ignored; a right click quitting Home; a double click launching; the
+breadcrumb ignored. Real run: SGR mouse codes into `ccs` in a pseudo-terminal;
+two clicks on `sticksandstrings` opened its page, a right click went back.
+
 ## Consequences
 
 - Skills from a kit are named `<kit>:<skill>` in Claude Code. A skill invoked

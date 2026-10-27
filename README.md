@@ -174,7 +174,12 @@ the library    from a kit: the tree with [x] picks for it (space picks, p picked
                r rename · x delete · e edit · v view · u update plugins
 everywhere     ←→ skills, agents, plugins (in the library) · ↑↓ PgUp/PgDn Home/End · / search
                ← or esc back (esc in the library) · q quit
+the mouse      click a row to select it, click it again to open or run it · click a [ ] box to tick it
+               click 3 · ⏎ start to launch · click the breadcrumb to go back · right click: back · wheel scrolls
 ```
+
+With the mouse on, a plain drag no longer selects terminal text; hold Shift (or
+Option in some macOS terminals) to select.
 
 See [ADR-2610261643 §18](docs/adrs/ADR-2610261643-logins-kits-library-sync.md).
 

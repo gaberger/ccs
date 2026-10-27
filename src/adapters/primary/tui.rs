@@ -7,14 +7,14 @@
 
 use crate::ports::{library_tree, pick, resolve_kit, AwsImport, LibraryItem, Browser, Entry, Finding, ItemKind, Name, Pick, ProfileOverview, ProfileRow, TreeRow};
 use std::collections::BTreeSet;
-use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::crossterm::execute;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs};
 use ratatui::Frame;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 /// The adapter's own key type, so tests need no terminal events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +34,10 @@ pub enum Key {
     /// The mouse wheel: three rows.
     WheelUp,
     WheelDown,
+    /// A left click at a column and row of the screen (§20).
+    Click(u16, u16),
+    /// A right click: back one page; never quits.
+    Back,
     Char(char),
 }
 
@@ -305,6 +309,34 @@ fn folder_label(kind: ItemKind, folder: &str) -> String {
     }
 }
 
+/// Something on screen a click can land on, recorded as each frame is drawn (§20).
+#[derive(Debug, Clone)]
+enum Hit {
+    /// A list. Line `n` of its rows' area is `map[top + n]`: a row and whether it
+    /// has a `[ ]` box, or `None` for a label. The box starts at column `indent`.
+    List { list: ListId, top: usize, indent: usize, map: Vec<Option<(usize, bool)>> },
+    /// A breadcrumb part: keep this many pages.
+    Crumb(usize),
+    /// A kind tab of the library.
+    Kind(usize),
+    /// Home's `3 · ⏎ start …`.
+    Start,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListId {
+    HomeProfiles,
+    HomeKits,
+    Page,
+    Library,
+    Picker,
+}
+
+/// The rows' area of a bordered box.
+fn inside(area: Rect) -> Rect {
+    area.inner(Margin { vertical: 1, horizontal: 1 })
+}
+
 /// A page above Home (ADR-2610261643 §18). Esc returns to the one below.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Page {
@@ -337,6 +369,8 @@ enum KitItem {
 }
 
 pub struct State {
+    /// Where the last frame put each clickable thing.
+    hits: RefCell<Vec<(Rect, Hit)>>,
     /// Home: the launch screen (§10), the page under every other.
     home: Picker,
     /// The pages opened from Home, each with the row it was on.
@@ -386,6 +420,7 @@ impl State {
     pub fn new(b: &dyn Browser) -> State {
         let current = b.profiles().into_iter().find(|p| p.current).map(|p| p.name.as_str().to_string());
         let mut s = State {
+            hits: RefCell::new(vec![]),
             home: Picker::new(b, current.as_deref()),
             stack: vec![],
             page_scroll: Scroll::default(),
@@ -520,7 +555,7 @@ impl State {
     pub fn handle(&mut self, b: &dyn Browser, key: Key) -> Option<Exit> {
         match std::mem::replace(&mut self.mode, Mode::Normal) {
             Mode::View { title, text, scroll } => {
-                if matches!(key, Key::Esc | Key::Char('q')) {
+                if matches!(key, Key::Esc | Key::Char('q') | Key::Back) {
                     return None;
                 }
                 let page = self.view_scroll.page.get();
@@ -569,6 +604,19 @@ impl State {
                 None
             }
             Mode::Pick { purpose, mut filter, mut sel } => {
+                // A click picks a row; a click on the picked row chooses it (§20).
+                let key = match key {
+                    Key::Click(x, y) => match self.hit_at(x, y) {
+                        Some((_, Hit::List { list: ListId::Picker, .. }, Some(row))) if row == sel => Key::Enter,
+                        Some((_, Hit::List { list: ListId::Picker, .. }, Some(row))) => {
+                            sel = row;
+                            Key::Back
+                        }
+                        _ => Key::Back,
+                    },
+                    Key::Back => Key::Esc,
+                    k => k,
+                };
                 match key {
                     Key::Esc => {
                         self.message = Some("cancelled".into());
@@ -660,14 +708,142 @@ impl State {
             }
             Mode::Normal => {
                 self.message = None;
-                match self.page() {
-                    None => self.home_key(b, key),
-                    Some(Page::Profile(n)) => self.profile_key(b, key, n),
-                    Some(Page::Kit(k)) => self.kit_key(b, key, k),
-                    Some(Page::Library { kit }) => self.library_key(b, key, kit),
+                match key {
+                    Key::Click(x, y) => self.click(b, x, y),
+                    Key::Back => {
+                        if !self.stack.is_empty() {
+                            self.pop(b);
+                        }
+                        None
+                    }
+                    k => self.dispatch(b, k),
                 }
             }
         }
+    }
+
+    /// A key on whatever page is open.
+    fn dispatch(&mut self, b: &dyn Browser, key: Key) -> Option<Exit> {
+        match self.page() {
+            None => self.home_key(b, key),
+            Some(Page::Profile(n)) => self.profile_key(b, key, n),
+            Some(Page::Kit(k)) => self.kit_key(b, key, k),
+            Some(Page::Library { kit }) => self.library_key(b, key, kit),
+        }
+    }
+
+    /// What the last frame drew at a point, and the row a list has there.
+    fn hit_at(&self, x: u16, y: u16) -> Option<(Rect, Hit, Option<usize>)> {
+        let hits = self.hits.borrow();
+        let (r, h) = hits.iter().rev().find(|(r, _)| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)?;
+        let row = match h {
+            Hit::List { top, map, .. } => map.get(top + usize::from(y - r.y)).copied().flatten(),
+            _ => None,
+        };
+        Some((*r, h.clone(), row.map(|(row, _)| row)))
+    }
+
+    /// Whether a click at column `col` of a list's line `y` lands on a `[ ]` box.
+    fn on_box(&self, area: Rect, y: u16, col: usize) -> bool {
+        let hits = self.hits.borrow();
+        hits.iter().rev().find(|(r, _)| *r == area).is_some_and(|(_, h)| match h {
+            Hit::List { top, indent, map, .. } => {
+                map.get(top + usize::from(y - area.y)).copied().flatten().is_some_and(|(_, boxed)| boxed) && (*indent..indent + 4).contains(&col)
+            }
+            _ => false,
+        })
+    }
+
+    /// A left click (§20): select a row; on the selected row, act as Enter; on a
+    /// `[ ]` box, act as space. Never a launch, except on `3 · ⏎ start`.
+    fn click(&mut self, b: &dyn Browser, x: u16, y: u16) -> Option<Exit> {
+        let (area, hit, row) = self.hit_at(x, y)?;
+        let col = usize::from(x - area.x);
+        match hit {
+            Hit::Crumb(depth) => {
+                if depth < self.stack.len() {
+                    self.stack.truncate(depth);
+                    self.focus = Focus::List;
+                    self.page_scroll.reset();
+                    self.refresh(b);
+                }
+                None
+            }
+            Hit::Kind(i) => {
+                if let Some(Page::Library { kit }) = self.page() {
+                    self.set_kind(b, kit.is_some(), i);
+                }
+                None
+            }
+            Hit::Start => self.home.handle(b, Key::Enter),
+            Hit::List { list, .. } => {
+                let row = row?;
+                let on_box = self.on_box(area, y, col);
+                match list {
+                    ListId::HomeProfiles => {
+                        let again = self.home.focus == Focus::List && self.home.sel == row;
+                        self.home.focus = Focus::List;
+                        if again {
+                            let key = if self.home.action().is_some() { Key::Enter } else { Key::Right };
+                            return self.home_key(b, key);
+                        }
+                        self.home.sel = row;
+                        if self.home.profile().is_some_and(|p| Some(&p.name) != self.home.ticks_for.as_ref()) {
+                            self.home.tick_defaults();
+                        }
+                        None
+                    }
+                    ListId::HomeKits => {
+                        let again = self.home.focus == Focus::Body && self.home.kit_sel == row;
+                        self.home.focus = Focus::Body;
+                        self.home.kit_sel = row;
+                        if on_box && row < self.home.kits.len() {
+                            return self.home.handle(b, Key::Char(' '));
+                        }
+                        if again {
+                            let key = if row < self.home.kits.len() { Key::Right } else { Key::Enter };
+                            return self.home_key(b, key);
+                        }
+                        None
+                    }
+                    ListId::Page => {
+                        let again = self.page_sel() == row;
+                        self.set_page_sel(row);
+                        if on_box {
+                            return self.dispatch(b, Key::Char(' '));
+                        }
+                        if again {
+                            return self.dispatch(b, Key::Enter);
+                        }
+                        None
+                    }
+                    ListId::Library => {
+                        let again = self.focus == Focus::Body && self.body_sel == row;
+                        self.focus = Focus::Body;
+                        self.body_sel = row;
+                        if on_box {
+                            return self.dispatch(b, Key::Char(' '));
+                        }
+                        if again {
+                            return self.dispatch(b, Key::Enter);
+                        }
+                        None
+                    }
+                    // The picker's clicks are taken in its own mode.
+                    ListId::Picker => None,
+                }
+            }
+        }
+    }
+
+    /// Show kind `to` (an index into KINDS) in the library.
+    fn set_kind(&mut self, b: &dyn Browser, for_kit: bool, to: usize) {
+        if for_kit {
+            self.tab = to;
+        } else {
+            self.sel = to;
+        }
+        self.library_landed(b);
     }
 
     // ── Pages (ADR-2610261643 §18) ───────────────────────────────────────────
@@ -884,12 +1060,7 @@ impl State {
                 let at = KINDS.iter().position(|k| *k == self.library_kind()).unwrap_or(0);
                 let to = if key == Key::Right { (at + 1).min(KINDS.len() - 1) } else { at.saturating_sub(1) };
                 if to != at {
-                    if kit.is_some() {
-                        self.tab = to;
-                    } else {
-                        self.sel = to;
-                    }
-                    self.library_landed(b);
+                    self.set_kind(b, kit.is_some(), to);
                 }
             }
             Key::Tab | Key::Char('h' | 'l' | 'c' | 'd' | 't') => {}
@@ -1364,10 +1535,11 @@ const NARROW: u16 = 70;
 /// Paint the whole screen from `state`: the breadcrumb, the page, the footer.
 pub fn draw(frame: &mut Frame, state: &State) {
     let [top, main, footer] = Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(frame.area());
+    state.hits.borrow_mut().clear();
     draw_crumb(frame, state, top);
     if !draw_overlay(frame, state, main) {
         match state.page() {
-            None => draw_home(frame, main, &state.home),
+            None => draw_home(frame, main, state),
             Some(Page::Profile(n)) => draw_profile(frame, state, main, &n),
             Some(Page::Kit(k)) => draw_kit(frame, state, main, &k),
             Some(Page::Library { .. }) => draw_library(frame, state, main),
@@ -1400,6 +1572,13 @@ pub fn draw(frame: &mut Frame, state: &State) {
         Mode::Search => format!("/ {}▏  enter keep · esc clear", state.body_filter),
         _ => state.message.clone().unwrap_or_else(|| state.hints()),
     };
+    // Home's step 3 is a button too: a click on it starts Claude.
+    if let (Mode::Normal, None, Some(l)) = (&state.mode, state.page(), state.home.launch_line()) {
+        if state.message.is_none() && text.starts_with("3 · ⏎ start") && state.home.profile().is_some() {
+            let w = u16::try_from(format!("3 · ⏎ start {l}").chars().count()).unwrap_or(u16::MAX);
+            state.hits.borrow_mut().push((Rect { width: w.min(footer.width), ..footer }, Hit::Start));
+        }
+    }
     frame.render_widget(Paragraph::new(text).style(Style::default().fg(Color::DarkGray)), footer);
 }
 
@@ -1417,6 +1596,13 @@ fn draw_crumb(frame: &mut Frame, state: &State, area: Rect) {
     };
     let width = u16::try_from(now.chars().count()).unwrap_or(u16::MAX);
     let [left, right] = Layout::horizontal([Constraint::Min(1), Constraint::Length(width)]).areas(area);
+    // Each part is a way back to its page.
+    let mut x = left.x + 1;
+    for (depth, part) in path.iter().enumerate() {
+        let w = u16::try_from(part.chars().count()).unwrap_or(0);
+        state.hits.borrow_mut().push((Rect { x, y: area.y, width: w, height: 1 }, Hit::Crumb(depth)));
+        x = x.saturating_add(w + 3);
+    }
     frame.render_widget(Paragraph::new(format!(" {}", path.join(" › "))).style(Style::default().add_modifier(Modifier::BOLD)), left);
     frame.render_widget(Paragraph::new(now).style(Style::default().fg(Color::Cyan)), right);
 }
@@ -1425,26 +1611,35 @@ fn draw_crumb(frame: &mut Frame, state: &State, area: Rect) {
 struct Line2<'a> {
     item: ListItem<'a>,
     row: Option<usize>,
+    /// The row starts with a `[ ]` box a click can tick.
+    boxed: bool,
 }
 
 fn row_line<'a>(row: usize, item: impl Into<ListItem<'a>>) -> Line2<'a> {
-    Line2 { item: item.into(), row: Some(row) }
+    Line2 { item: item.into(), row: Some(row), boxed: false }
+}
+
+fn box_line<'a>(row: usize, item: impl Into<ListItem<'a>>) -> Line2<'a> {
+    Line2 { item: item.into(), row: Some(row), boxed: true }
 }
 
 fn label<'a>(text: impl Into<String>) -> Line2<'a> {
-    Line2 { item: ListItem::new(text.into()).style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)), row: None }
+    Line2 { item: ListItem::new(text.into()).style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)), row: None, boxed: false }
 }
 
 fn detail_lines<'a>(detail: &[String]) -> impl Iterator<Item = Line2<'a>> + '_ {
-    detail.iter().map(|d| Line2 { item: ListItem::new(format!("      {d}")).style(Style::default().fg(Color::DarkGray)), row: None })
+    detail.iter().map(|d| Line2 { item: ListItem::new(format!("      {d}")).style(Style::default().fg(Color::DarkGray)), row: None, boxed: false })
 }
 
 /// A page's lines, with the cursor on row `sel`.
-fn render_page(frame: &mut Frame, area: Rect, lines: Vec<Line2>, sel: usize, scroll: &Scroll) {
+fn render_page(frame: &mut Frame, area: Rect, state: &State, lines: Vec<Line2>, sel: usize, scroll: &Scroll) {
     let at = lines.iter().position(|l| l.row == Some(sel));
+    let map = lines.iter().map(|l| l.row.map(|r| (r, l.boxed))).collect();
     let items = lines.into_iter().map(|l| l.item).collect();
     let block = Block::default().borders(Borders::ALL).border_style(border(true));
+    let indent = if at.is_some() { 2 } else { 0 };
     render_list(frame, area, block, items, at, scroll, Some("▶ "));
+    state.hits.borrow_mut().push((inside(area), Hit::List { list: ListId::Page, top: scroll.offset.get(), indent, map }));
 }
 
 fn draw_profile(frame: &mut Frame, state: &State, area: Rect, n: &Name) {
@@ -1465,7 +1660,7 @@ fn draw_profile(frame: &mut Frame, state: &State, area: Rect, n: &Name) {
                 }
             }
             ProfileItem::Kit(k) => {
-                lines.push(row_line(row, tick(kits.contains(k), k)));
+                lines.push(box_line(row, tick(kits.contains(k), k)));
                 if row == sel {
                     let i = state.kits.iter().position(|x| x == k).unwrap_or(0);
                     lines.extend(detail_lines(state.kit_details.get(i).map(Vec::as_slice).unwrap_or_default()));
@@ -1496,7 +1691,7 @@ fn draw_profile(frame: &mut Frame, state: &State, area: Rect, n: &Name) {
     }
     let want = u16::try_from(info.len() + 2).unwrap_or(u16::MAX).min(area.height / 2);
     let [list, below] = Layout::vertical([Constraint::Min(3), Constraint::Length(want)]).areas(area);
-    render_page(frame, list, lines, sel, &state.page_scroll);
+    render_page(frame, list, state, lines, sel, &state.page_scroll);
     frame.render_widget(Paragraph::new(info).block(Block::default().borders(Borders::ALL).title(" doctor ")), below);
 }
 
@@ -1532,7 +1727,7 @@ fn draw_kit(frame: &mut Frame, state: &State, area: Rect, kit: &str) {
                     people = true;
                 }
                 let on = state.profiles.iter().any(|x| x.name == p && x.kits.iter().any(|k| k == kit));
-                lines.push(row_line(row, tick(on, p.as_str())));
+                lines.push(box_line(row, tick(on, p.as_str())));
             }
             KitItem::Rename => {
                 lines.push(label(""));
@@ -1541,7 +1736,7 @@ fn draw_kit(frame: &mut Frame, state: &State, area: Rect, kit: &str) {
             KitItem::Delete => lines.push(row_line(row, Span::styled("Delete the kit", Style::default().fg(Color::Red)))),
         }
     }
-    render_page(frame, area, lines, sel, &state.page_scroll);
+    render_page(frame, area, state, lines, sel, &state.page_scroll);
 }
 
 /// The library page: a line of kinds, then the tree.
@@ -1549,6 +1744,13 @@ fn draw_library(frame: &mut Frame, state: &State, area: Rect) {
     let [tabs_area, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
     let titles = vec![format!("Skills ({})", state.counts[0]), format!("Agents ({})", state.counts[1]), format!("Plugins ({})", state.counts[2])];
     let at = KINDS.iter().position(|k| *k == state.library_kind()).unwrap_or(0);
+    // Tabs draw " title " then "│" between them; each title is a click target.
+    let mut x = tabs_area.x;
+    for (i, t) in titles.iter().enumerate() {
+        let w = u16::try_from(t.chars().count()).unwrap_or(0) + 2;
+        state.hits.borrow_mut().push((Rect { x, y: tabs_area.y, width: w, height: 1 }, Hit::Kind(i)));
+        x = x.saturating_add(w + 1);
+    }
     let tabs_widget = Tabs::new(titles).select(at).highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
     frame.render_widget(tabs_widget, tabs_area);
     draw_body(frame, state, body);
@@ -1595,7 +1797,9 @@ fn draw_overlay(frame: &mut Frame, state: &State, area: Rect) -> bool {
             PickFor::AddToKit(_) => " Add to kit ",
             PickFor::Import(_) => " Import ",
         };
+        let map = (0..rows.len()).map(|r| Some((r, false))).collect();
         render_list(frame, area, block.title(title), rows, Some(*sel), &state.pick_scroll, None);
+        state.hits.borrow_mut().push((inside(area), Hit::List { list: ListId::Picker, top: state.pick_scroll.offset.get(), indent: 0, map }));
         return true;
     }
     false
@@ -1652,7 +1856,10 @@ fn draw_body(frame: &mut Frame, state: &State, area: Rect) {
                     ]))
                 })
                 .collect();
+            // Every tree row starts with its mark: [ ] for a kit's picks, ● for the library's marks.
+            let map = (0..rows.len()).map(|r| Some((r, true))).collect();
             render_list(frame, area, block, rows, selected, &state.body_scroll, None);
+            state.hits.borrow_mut().push((inside(area), Hit::List { list: ListId::Library, top: state.body_scroll.offset.get(), indent: 0, map }));
     }
 }
 
@@ -1868,7 +2075,8 @@ impl Picker {
 }
 
 /// Paint Home: the three steps, each list ending with its actions.
-fn draw_home(frame: &mut Frame, main: Rect, p: &Picker) {
+fn draw_home(frame: &mut Frame, main: Rect, state: &State) {
+    let p = &state.home;
     let [left, right] = if main.width >= NARROW {
         Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(main)
     } else {
@@ -1894,7 +2102,9 @@ fn draw_home(frame: &mut Frame, main: Rect, p: &Picker) {
         })
         .collect();
     rows.extend(HOME_ACTIONS.iter().map(|a| action(a.label())));
+    let map = (0..rows.len()).map(|r| Some((r, false))).collect();
     render_list(frame, left, block, rows, Some(p.sel), &p.profile_scroll, Some("▶ "));
+    state.hits.borrow_mut().push((inside(left), Hit::List { list: ListId::HomeProfiles, top: p.profile_scroll.offset.get(), indent: 2, map }));
 
     let title = match &p.ticks_for {
         Some(n) => format!(" 2 · Choose kits for {} ", n.as_str()),
@@ -1915,7 +2125,15 @@ fn draw_home(frame: &mut Frame, main: Rect, p: &Picker) {
     rows.push(action("+ New kit"));
     let open = (p.focus == Focus::Body).then_some(p.kit_sel);
     let detail = open.and_then(|i| p.details.get(i)).map(Vec::as_slice).unwrap_or_default();
+    // The detail lines under the open kit are not rows.
+    let mut map: Vec<Option<(usize, bool)>> = (0..rows.len()).map(|r| Some((r, r < p.kits.len()))).collect();
+    if let Some(i) = open.filter(|i| *i < map.len()) {
+        map.splice(i + 1..i + 1, detail.iter().map(|_| None));
+    }
+    // Without the cursor in it, a list draws no "▶ " margin, so its boxes start at column 0.
+    let indent = if open.is_some() { 2 } else { 0 };
     render_list(frame, right, block, with_detail(rows, open, detail), open, &p.kit_scroll, Some("▶ "));
+    state.hits.borrow_mut().push((inside(right), Hit::List { list: ListId::HomeKits, top: p.kit_scroll.offset.get(), indent, map }));
 }
 
 /// A full-screen view the run loop can drive.
@@ -1986,6 +2204,8 @@ fn drive(b: &dyn Browser, state: &mut dyn Screen) -> std::io::Result<Exit> {
                 let key = match m.kind {
                     MouseEventKind::ScrollDown => Key::WheelDown,
                     MouseEventKind::ScrollUp => Key::WheelUp,
+                    MouseEventKind::Down(MouseButton::Left) => Key::Click(m.column, m.row),
+                    MouseEventKind::Down(MouseButton::Right) => Key::Back,
                     _ => continue,
                 };
                 if let Some(exit) = state.key(b, key) {

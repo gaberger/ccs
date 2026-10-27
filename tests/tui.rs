@@ -1090,3 +1090,103 @@ fn a_tick_survives_a_visit_to_an_action_row() {
     let out = screen(&s);
     assert!(out.contains("[x] eng") && out.contains("3 · ⏎ start work +net +eng"), "{out}");
 }
+
+// ── The mouse (§20) ──────────────────────────────────────────────────────────
+
+/// Draw the screen, then click the first place `text` shows, `dx` columns into it.
+fn click(s: &mut State, b: &dyn Browser, text: &str, dx: usize) -> Option<Exit> {
+    let out = screen(s);
+    let (y, line) = out.lines().enumerate().find(|(_, l)| l.contains(text)).unwrap_or_else(|| panic!("no {text:?} on screen:\n{out}"));
+    let x = line[..line.find(text).unwrap()].chars().count() + dx;
+    s.handle(b, Key::Click(u16::try_from(x).unwrap(), u16::try_from(y).unwrap()))
+}
+
+#[test]
+fn a_click_selects_a_profile_and_a_second_click_opens_it() {
+    let b = Fake::new();
+    let mut s = home(&b);
+    click(&mut s, &b, "work  ›", 0);
+    assert!(screen(&s).contains("▶ work") && screen(&s).contains("[x] net"), "selected, with its kits:\n{}", screen(&s));
+    assert_eq!(click(&mut s, &b, "▶ work", 2), None, "a second click never launches");
+    assert!(crumb(&screen(&s)).contains("ccs › work"), "it opens the page:\n{}", screen(&s));
+}
+
+#[test]
+fn a_click_on_a_box_ticks_a_kit() {
+    let b = Fake::new().current("work");
+    let mut s = home(&b);
+    click(&mut s, &b, "[ ] eng", 1);
+    let out = screen(&s);
+    assert!(out.contains("[x] eng") && out.contains("start work +net +eng"), "{out}");
+    click(&mut s, &b, "[x] net", 1);
+    assert!(screen(&s).contains("start work +eng"), "{}", screen(&s));
+}
+
+#[test]
+fn a_click_on_an_action_runs_it() {
+    let b = Fake::new();
+    let mut s = home(&b);
+    click(&mut s, &b, "◆ Library", 2);
+    click(&mut s, &b, "◆ Library", 2);
+    assert!(crumb(&screen(&s)).contains("ccs › library"), "{}", screen(&s));
+    let mut s = home(&b);
+    click(&mut s, &b, "+ New kit", 2);
+    click(&mut s, &b, "+ New kit", 2);
+    assert!(screen(&s).contains("New kit name:"), "{}", screen(&s));
+}
+
+#[test]
+fn a_click_on_the_start_line_launches() {
+    let b = Fake::new().current("work");
+    let mut s = home(&b);
+    assert_eq!(click(&mut s, &b, "3 · ⏎ start", 4), Some(Exit::LaunchWith { profile: "work".into(), kits: vec!["net".into()] }));
+}
+
+#[test]
+fn a_click_on_the_breadcrumb_goes_back_and_a_right_click_steps_back() {
+    let b = Fake::new().current("work");
+    let mut s = home(&b);
+    press(&mut s, &b, &[Right, Down, Down, Right, Down, Enter]);
+    assert!(crumb(&screen(&s)).contains("ccs › work › kit net › library"), "{}", screen(&s));
+    click(&mut s, &b, "work ›", 1);
+    assert!(crumb(&screen(&s)).ends_with("ccs › work") || !crumb(&screen(&s)).contains("kit net"), "{}", screen(&s));
+    assert_eq!(s.handle(&b, Key::Back), None);
+    assert!(!crumb(&screen(&s)).contains('›'), "right click: back home:\n{}", screen(&s));
+    assert_eq!(s.handle(&b, Key::Back), None, "and on Home it never quits");
+}
+
+#[test]
+fn clicks_on_a_page_select_tick_and_open() {
+    let b = Fake::new();
+    let mut s = work_page(&b);
+    click(&mut s, &b, "[ ] eng", 1);
+    assert_eq!(b.called(), ["attach eng work true"], "the box switches the kit");
+    click(&mut s, &b, "Copy to a new profile", 3);
+    assert!(!screen(&s).contains("Copy work to:"), "one click selects");
+    click(&mut s, &b, "Copy to a new profile", 3);
+    assert!(screen(&s).contains("Copy work to:"), "a second click runs it:\n{}", screen(&s));
+}
+
+#[test]
+fn clicks_in_the_library_switch_kinds_pick_and_view() {
+    let b = Fake::new();
+    let mut s = net_library(&b);
+    click(&mut s, &b, "Agents (", 2);
+    assert!(screen(&s).contains("rev"), "{}", screen(&s));
+    click(&mut s, &b, "Skills (", 2);
+    click(&mut s, &b, "[ ] ", 1);
+    assert_eq!(b.called(), ["set_use net skills/humanize true"], "the box picks");
+    click(&mut s, &b, "inspect-edge", 2);
+    click(&mut s, &b, "inspect-edge", 2);
+    assert!(screen(&s).contains("Body of skills/inspect-edge"), "{}", screen(&s));
+}
+
+#[test]
+fn a_click_chooses_in_a_picker() {
+    let b = Fake::new();
+    let mut s = home(&b);
+    press(&mut s, &b, &[Char('i')]);
+    click(&mut s, &b, "aws dev", 2);
+    click(&mut s, &b, "aws dev", 2);
+    assert_eq!(b.called(), ["import_aws dev false"]);
+}
