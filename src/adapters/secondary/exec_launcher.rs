@@ -32,6 +32,9 @@ impl Launcher for ExecLauncher {
             cmd.env_remove(k);
         }
         cmd.envs(plan.set.iter().map(|(k, v)| (k, v)));
+        if let Some(dir) = &plan.dir {
+            cmd.current_dir(dir);
+        }
         let e = cmd.exec();
         Error::Io(format!("cannot start {}: {e}", self.program))
     }

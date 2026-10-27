@@ -5,13 +5,13 @@
 //! or directories, which is why a test can swap it for a temp dir.
 
 use crate::domain::{
-    CcsError, Kind, KitName, LaunchPlan, LegacyItem, LegacyLayout, LibItem, LibraryRemoved, ListEntry, Overview, Profile,
+    AwsRow, CcsError, ImportOutcome, Kind, KitName, LaunchPlan, LegacyItem, LegacyLayout, LibItem, LibraryRemoved, ListEntry, Overview, Profile,
     ProfileName, Use,
 };
 
 /// Re-exported so an adapter needs to import nothing but this module (rule 4).
 pub use crate::domain::{
-    front_matter_description, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
+    front_matter_description, AwsRow as AwsProfileRow, ImportOutcome as AwsImport, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
     Kind as ItemKind, KitName as Kit, LaunchPlan as Plan, LegacyItem as OldItem, LegacyLayout as OldLayout,
     LegacyProfile as OldProfile, LibItem as LibraryItem, LibraryRemoved as Removed, ListEntry as ProfileRow,
     Overview as ProfileOverview, Pick, Profile as LoadedProfile, ProfileName as Name, TreeRow, Use as Entry,
@@ -29,6 +29,10 @@ pub trait ProfileStore {
     fn default_name(&self) -> Option<String>;
     fn set_default(&self, name: &ProfileName) -> Result<(), CcsError>;
     fn clear_default(&self) -> Result<(), CcsError>;
+    /// The profile's folder: `profile.env`, `kits`, `config/`.
+    fn folder(&self, name: &ProfileName) -> std::path::PathBuf;
+    /// The profile's variables file, `profile.env`.
+    fn env_file(&self, name: &ProfileName) -> std::path::PathBuf;
     /// Replace the profile's variables file.
     fn write_env(&self, name: &ProfileName, text: &str) -> Result<(), CcsError>;
     /// Write the profile's `settings.json` unless one exists. Returns whether it wrote.
@@ -164,4 +168,18 @@ pub trait Browser {
     /// Set a profile's default kits, in order.
     fn set_kits(&self, profile: &ProfileName, kits: &[String]) -> Result<(), CcsError>;
     fn complete_path(&self, typed: &str) -> Vec<String>;
+    /// `ccs new`: an empty profile, or a copy of `from`'s variables, kits and settings.
+    fn new_profile(&self, name: &str, from: Option<&ProfileName>) -> Result<(), CcsError>;
+    /// Open a profile's `profile.env` in the editor. The caller hands over the terminal first.
+    fn edit_profile(&self, name: &ProfileName) -> Result<(), CcsError>;
+    /// Whether an earlier ccs left a layout for `migrate`.
+    fn needs_migrate(&self) -> bool;
+    /// `ccs migrate`. Returns its notes.
+    fn migrate(&self) -> Result<Vec<String>, CcsError>;
+    /// `ccs import`: `~/.claude` into the library and kit `imported`. Returns its notes.
+    fn import_claude(&self) -> Result<Vec<String>, CcsError>;
+    /// `ccs import aws`, listing: every AWS CLI profile and the ccs profile using it.
+    fn aws_profiles(&self) -> Result<Vec<AwsRow>, CcsError>;
+    /// `ccs import aws <p>…` or, with `all`, `--all`.
+    fn import_aws(&self, names: &[String], all: bool) -> Result<Vec<ImportOutcome>, CcsError>;
 }

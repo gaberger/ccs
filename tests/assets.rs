@@ -124,7 +124,7 @@ fn the_app_drives_the_real_library_kits_and_profiles_through_the_port() {
     let old = ccs::legacy(&sb.home(), sb.root.join("home/.claude"));
     let (paths, editor) = (sb.paths(), Recorder::default());
     usecases::new_profile(&store, &ProfileName::parse("work").unwrap(), None).unwrap();
-    let app = usecases::App { store: &store, kits: &kits, lib: &lib, legacy: &old, paths: &paths, editor: &editor, claude_available: true, current: None };
+    let app = usecases::App { store: &store, kits: &kits, lib: &lib, legacy: &old, paths: &paths, editor: &editor, aws: &NoAws, ccs_bin: "ccs".into(), claude_available: true, current: None };
     let work = ProfileName::parse("work").unwrap();
 
     // Library: add by typed path into a folder, make and move folders.
@@ -163,4 +163,54 @@ fn the_app_drives_the_real_library_kits_and_profiles_through_the_port() {
     app.remove_kit("net").unwrap();
     assert!(app.profiles()[0].kits.is_empty());
     assert_eq!(app.complete_path("~/src/d"), ["~/src/demo/"]);
+}
+
+/// One AWS CLI profile, `dev`, in us-west-2.
+struct NoAws;
+impl ccs::ports::AwsProfiles for NoAws {
+    fn names(&self) -> Result<Vec<String>, CcsError> {
+        Ok(vec!["dev".into()])
+    }
+    fn region(&self, _: &str) -> Option<String> {
+        Some("us-west-2".into())
+    }
+}
+
+/// Everything the CLI does to profiles, through the TUI's port (ADR-2610261643 §12).
+#[test]
+fn the_app_makes_copies_edits_and_imports_profiles_through_the_port() {
+    use ccs::ports::Browser;
+    let sb = Sandbox::new();
+    sb.write("home/.claude/skills/demo/SKILL.md", SKILL);
+    let (store, lib, kits) = (ccs::profile_store(sb.home()), ccs::library(&sb.home()), ccs::kit_store(&sb.home()));
+    let old = ccs::legacy(&sb.home(), sb.root.join("home/.claude"));
+    let (paths, editor) = (sb.paths(), Recorder::default());
+    let app = usecases::App { store: &store, kits: &kits, lib: &lib, legacy: &old, paths: &paths, editor: &editor, aws: &NoAws, ccs_bin: "/bin/ccs".into(), claude_available: true, current: None };
+    let work = ProfileName::parse("work").unwrap();
+
+    app.new_profile("work", None).unwrap();
+    let settings = std::fs::read_to_string(sb.home().join("work/config/settings.json")).unwrap();
+    assert!(settings.contains("'/bin/ccs' statusline"), "a new profile gets the status line, as ccs new does: {settings}");
+    assert!(app.new_profile("work", None).is_err(), "never overwrites");
+    assert!(app.new_profile("bad name", None).is_err());
+    app.new_kit("net").unwrap();
+    app.attach("net", &work, true).unwrap();
+    app.new_profile("copy", Some(&work)).unwrap();
+    assert_eq!(app.profiles().iter().find(|p| p.name.as_str() == "copy").unwrap().kits, ["net"]);
+
+    app.edit_profile(&work).unwrap();
+    assert_eq!(editor.0.borrow()[0], sb.home().join("work/profile.env"));
+    assert!(app.edit_profile(&ProfileName::parse("ghost").unwrap()).is_err());
+
+    assert_eq!(app.aws_profiles().unwrap()[0].imported_as, None);
+    let out = app.import_aws(&["dev".into()], false).unwrap();
+    assert_eq!(out[0].to_string(), "✓ dev (bedrock, us-west-2)");
+    assert_eq!(app.aws_profiles().unwrap()[0].imported_as.as_deref(), Some("dev"));
+    assert!(app.import_aws(&[], true).unwrap()[0].to_string().starts_with("- dev:"), "--all skips what exists");
+
+    assert!(!app.needs_migrate());
+    assert!(app.migrate().unwrap().is_empty());
+    app.import_claude().unwrap();
+    assert!(sb.home().join("library/skills/imported/demo/SKILL.md").is_file() || app.library(Kind::Skill).0.iter().any(|i| i.name == "demo"));
+    assert!(app.kits().contains(&"imported".to_string()));
 }

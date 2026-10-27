@@ -120,22 +120,30 @@ read an agent through a link, so an agent edit applies from the next launch),
 and the instructions are appended to the system prompt. In Claude Code a kit's
 skills are named `<kit>:<skill>`, for example `/net:find-nqe-query`.
 
-**The TUI.** `ccs ui` lists profiles (with their `+kits`), then the kits, then
-`◆ library`.
+**The TUI.** `ccs ui` has a menu bar, `Profiles │ Kits │ Library`; `1` `2`
+`3` switch section, and each section keeps its place. The list is on the left
+and the selected row's tabs on the right; below 70 columns the list sits over
+them. Everything the CLI does to profiles, kits and the library, the TUI does
+too.
 
 ```
-profile    Overview · Kits      ⏎ launch · d default · space (Kits tab) attach/detach
-kit        Skills · Agents · CLAUDE.md · Profiles
+1 Profiles  Overview · Kits     ⏎ launch · t shell in the profile's folder, with its variables
+                                n new (also on an empty section) · c copy (variables, kits, settings;
+                                never the login) · e edit profile.env · d default
+                                Kits tab: space attaches a kit
+2 Kits      Skills · Agents · CLAUDE.md · Profiles
+                                n new kit · r rename · x delete (asks y/n)
                                 space pick: [x] picked, [·] picked by a folder above, [ ] not
                                 p show only what it picks · e edit (an item, or the kit's CLAUDE.md) · v view
                                 Profiles tab: space attaches the kit to a profile
-── kits ──                      n new kit · on a kit: r rename, x delete (asks y/n)
-library    Skills · Agents      space mark (●) · m move to a folder · + add to a kit (both pick from
+3 Library   skills · agents     space mark (●) · m move to a folder · + add to a kit (both pick from
                                 a list; type to filter, or type a new name) · x delete (asks y/n)
                                 a add from a path (Tab completes) · n new folder · r rename a folder
                                 e edit · v view · each row shows the kits that pick it: ‹network›
-everywhere ↑↓ move · PgUp/PgDn a page · Home/End (g/G) first/last · mouse wheel
-           ←→ tab · tab focus · / search · q quit
+everywhere  i import: ~/.claude, an AWS profile, every AWS profile, or migrate an old layout
+            ↑↓ move · PgUp/PgDn a page · Home/End (g/G) first/last · mouse wheel
+            ←→ tab · tab focus · / search · q quit
+            a list of ticks opens scrolled to its first ticked row
 ```
 
 See [ADR-2610261643 §8](docs/adrs/ADR-2610261643-logins-kits-library-sync.md).

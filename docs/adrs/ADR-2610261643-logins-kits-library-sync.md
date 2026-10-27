@@ -220,6 +220,94 @@ claude-bedrock-gary@us-east-1` and six kits; one tick and Enter launched with
 `CCS_KITS=base,writing`; the saved defaults did not change; the output turned
 mouse capture on (`?1000h`) and off (`?1000l`).
 
+Added 2026-10-27: a list of ticks scrolls to its first ticked row when it is
+shown (a profile's kits, a kit's profiles and picks, the launch screen's kits),
+up or down, even when that list is not focused. Tab into the list puts the
+cursor on a row in view, so the view stays. Tests: 4 in `tests/tui.rs`.
+Injected bugs, each caught: no scroll up to a row above the view; the cursor
+not kept in view on Tab; no scroll when the row changes.
+
+### 12. The TUI does what the CLI does (decided 2026-10-27)
+
+The user: "in the ui there is no way to create a new profile. everything we
+can do at cli should be available in tui". Each CLI command now has a TUI way,
+through the `Browser` port, onto the use case the CLI calls:
+
+| CLI | TUI |
+|---|---|
+| `ccs new <name>` | `n` on `── profiles ──` or a profile |
+| `ccs new <name> --from <p>` | `c` on profile `<p>` |
+| (edit `profile.env` by hand) | `e` on a profile |
+| `ccs import`, `ccs import aws [<p>…] [--all]`, `ccs migrate` | `i`: one list of what can be imported here; migrate only when an old layout is here; results in the pager |
+| `ccs default`, `doctor`, `env`, `which`, `list` | `d`; the Overview tab; `*` and `(default)` marks |
+| `ccs library …`, `ccs kit …` | §8, §9 |
+
+`ccs statusline` stays CLI only: Claude Code runs it, not a person.
+`--region` is not offered: a profile without a region says so, and `e` sets
+it.
+
+A `── profiles ──` heading is always the first row, as `── kits ──` is for
+kits, so `n` and `i` work before any profile exists. The cursor still starts
+on the first profile. Found by the real run, not the tests: with no profiles,
+`n` landed on `── kits ──` and made a kit.
+
+`make_profile` (parse, create, seed the status line) moved from the CLI into
+the use cases, so `ccs new` and `n` cannot drift. `ImportOutcome` formats
+itself, for the same reason.
+
+§12 **done** (tests: 11 in `tests/tui.rs`, one real-`App` test in
+`tests/assets.rs` with real files). Injected bugs, each caught: a copy losing
+its source; migrate never offered; the new profile not selected. Real run
+(2026-10-27), a 130×30 pseudo-terminal, an empty `$CCS_HOME`, a fake `aws` and
+a fake editor: `n zed` made a profile; `e` wrote its `profile.env`; `c zed2`
+copied the edited variables; `i`, `dev`, Enter made a Bedrock profile with
+`AWS_REGION=us-west-2`.
+
+### 13. A menu bar of sections (decided 2026-10-27)
+
+The user, with a screenshot of a 30-column terminal: "i think we need a menu
+for a profile than a second vertical for the kits". Asked to choose between a
+menu bar of sections and an action menu on a profile, they chose the menu bar.
+
+- The list shows one section at a time: `Profiles │ Kits │ Library`, in a bar
+  above it. `1` `2` `3` switch; each section keeps the row it was left on. `←→`
+  still switches the body's tabs, as before.
+- The Library section lists `skills` and `agents`, one tab each, so every
+  section works the same way: a row on the left, its tabs on the right.
+- An empty section shows one row, `none yet · n makes one`, so `n` and `i`
+  work before anything exists. This replaces the `── profiles ──` and `── kits
+  ──` headings of §12.
+- Below 70 columns the list sits over the body instead of beside it. Before,
+  the body was cut off, and with it every Overview.
+
+§13 **done** (tests: 6 in `tests/tui.rs`; 31 older tests moved from counting
+rows to section keys). Injected bugs, each caught: a section forgetting its
+row; every section showing profiles; a new kit not selected (missed at first,
+test added). A narrow launch-screen test first passed without the change,
+because both panes put their first rows on one line; it now compares lines,
+and fails without the change.
+
+### 14. A shell in the profile's folder (decided 2026-10-27)
+
+The user: "in the overview add a start in terminal option put me in the
+profile directory". The Overview shows `Folder: <dir>  t opens a shell here`.
+`t` on a profile ends the TUI and replaces ccs with `$SHELL` (else `/bin/sh`),
+started in the profile's folder with the variables a launch sets: the
+provider variables cleared and the profile's set, `CLAUDE_CONFIG_DIR`,
+`CCS_PROFILE`. `exit` returns to the shell that ran ccs. No kits: `ccs <name>`
+launches with them, and the message says so.
+
+`LaunchPlan` gains `dir`, `ProfileStore` gains `folder`, and `shell_plan` is the
+use case. The shell goes through the same `ExecLauncher`, made for `$SHELL` in
+the composition root.
+
+§14 **done** (tests: one in `tests/profiles.rs`, two in `tests/tui.rs`).
+Injected bugs, each caught: the shell not started in the folder; `t` working on
+a kit. Real run (2026-10-27), a pseudo-terminal and a fake `$SHELL` that wrote
+what it saw: `pwd` was `ccs/zed`, with `CCS_PROFILE=zed`, `AWS_PROFILE=sso` and
+`CLAUDE_CONFIG_DIR=ccs/zed/config`. The same run at 30 columns found the cut-off
+body that §13's narrow layout fixes.
+
 ## Consequences
 
 - Skills from a kit are named `<kit>:<skill>` in Claude Code. A skill invoked

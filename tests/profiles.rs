@@ -303,3 +303,21 @@ fn importing_nothing_without_all_is_a_usage_error() {
 }
 
 
+
+/// `t` in the TUI (ADR-2610261643 §14): a shell in the profile's folder, with
+/// the variables a launch sets and none leaking from the caller.
+#[test]
+fn a_shell_plan_starts_in_the_profile_folder_with_its_variables() {
+    let sb = Sandbox::new();
+    let store = sb.store();
+    usecases::new_profile(&store, &name("work"), None).unwrap();
+    fs::write(sb.home().join("work/profile.env"), "AWS_PROFILE=sso\n").unwrap();
+    let plan = usecases::shell_plan(&store, &name("work")).unwrap();
+    assert_eq!(plan.dir.as_deref(), Some(sb.home().join("work").as_path()));
+    assert!(plan.set.contains(&("AWS_PROFILE".into(), "sso".into())));
+    assert!(plan.set.contains(&("CCS_PROFILE".into(), "work".into())));
+    assert!(plan.set.iter().any(|(k, v)| k == "CLAUDE_CONFIG_DIR" && v.ends_with("work/config")));
+    assert!(plan.unset.contains(&"CLAUDE_CODE_USE_BEDROCK".to_string()));
+    assert!(plan.args.is_empty(), "a shell gets no claude arguments");
+    assert!(matches!(usecases::shell_plan(&store, &name("ghost")), Err(CcsError::NoProfile(_))));
+}

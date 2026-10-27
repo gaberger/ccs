@@ -27,7 +27,7 @@ use adapters::secondary::{
 };
 use adapters::primary::tui;
 use domain::{
-    library_tree, parse_command, CcsError, Command, Finding, ImportOutcome, Kind, KitCmd, LibraryCmd, ProfileName, HELP,
+    library_tree, parse_command, CcsError, Command, Finding, Kind, KitCmd, LibraryCmd, ProfileName, HELP,
 };
 use ports::{Launcher, ProfileStore};
 use std::io::{IsTerminal, Read};
@@ -107,6 +107,7 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
     };
     let paths = path_input(user_home.clone(), std::env::current_dir().map_err(|e| CcsError::Io(format!("current dir: {e}")))?);
     let ed = editor();
+    let aws = AwsCli::new(var("CCS_AWS_BIN").unwrap_or_else(|| "aws".into()));
     let claude_available = launcher.available();
     let app = |current: Option<String>| usecases::App {
         store: &store,
@@ -115,6 +116,8 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
         legacy: &old,
         paths: &paths,
         editor: &ed,
+        aws: &aws,
+        ccs_bin: ccs_bin(),
         claude_available,
         current,
     };
@@ -132,6 +135,12 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             tui::Exit::LaunchWith { profile, kits: picked } => {
                 let name = usecases::existing(&store, &profile)?;
                 launch(&usecases::prepare_launch(&store, &kits, &lib, &name, Some(picked), vec![])?, &launcher)
+            }
+            tui::Exit::Shell(n) => {
+                let plan = usecases::shell_plan(&store, &usecases::existing(&store, &n)?)?;
+                let shell = var("SHELL").unwrap_or_else(|| "/bin/sh".into());
+                eprintln!("ccs: {shell} in {}, with profile {n}'s variables; exit returns. ccs {n} launches with its kits.", plan.dir.as_ref().map(|d| d.display().to_string()).unwrap_or_default());
+                launch(&(plan, vec![]), &ExecLauncher::new(shell))
             }
         }
     };
@@ -171,12 +180,8 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             Ok(0)
         }
         Command::New { name, from } => {
-            let name = ProfileName::parse(&name)?;
             let from = from.map(|f| usecases::existing(&store, &f)).transpose()?;
-            usecases::new_profile(&store, &name, from.as_ref())?;
-            if from.is_none() {
-                usecases::seed_statusline(&store, &name, &ccs_bin())?;
-            }
+            let name = usecases::make_profile(&store, &name, from.as_ref(), &ccs_bin())?;
             let n = name.as_str();
             println!("Created profile '{n}'. Edit its variables in profile.env, then run: ccs {n}");
             println!("MCP servers belong to the profile. Add one with: ccs {n} mcp add -s user <name> -- <command>");
@@ -245,7 +250,6 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             Ok(0)
         }
         Command::ImportAws { profiles, all, region } => {
-            let aws = AwsCli::new(var("CCS_AWS_BIN").unwrap_or_else(|| "aws".into()));
             if profiles.is_empty() && !all {
                 println!("AWS CLI profiles (import with: ccs import aws <name>… or --all):");
                 for row in usecases::aws_status(&store, &aws)? {
@@ -257,13 +261,7 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
                 return Ok(0);
             }
             for o in usecases::import_aws(&store, &aws, &profiles, all, region.as_deref(), &ccs_bin())? {
-                match o {
-                    ImportOutcome::Created { name, region: Some(r) } => println!("  ✓ {name} (bedrock, {r})"),
-                    ImportOutcome::Created { name, region: None } => {
-                        println!("  ! {name} (bedrock, no region: set AWS_REGION in its profile.env)")
-                    }
-                    ImportOutcome::Skipped { aws, reason } => println!("  - {aws}: {reason}"),
-                }
+                println!("  {o}");
             }
             Ok(0)
         }

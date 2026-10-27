@@ -69,6 +69,14 @@ fn io_err<'a>(what: &str, path: &'a Path) -> impl Fn(io::Error) -> Error + 'a {
 }
 
 impl ProfileStore for FsProfileStore {
+    fn folder(&self, name: &Name) -> PathBuf {
+        self.dir(name)
+    }
+
+    fn env_file(&self, name: &Name) -> PathBuf {
+        self.dir(name).join(ENV_FILE)
+    }
+
     fn names(&self) -> Vec<Name> {
         let Ok(entries) = fs::read_dir(&self.home) else { return vec![] };
         let mut out: Vec<Name> = entries

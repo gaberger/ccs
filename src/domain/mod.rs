@@ -151,13 +151,15 @@ pub struct LaunchPlan {
     pub unset: Vec<String>,
     pub set: Vec<(String, String)>,
     pub args: Vec<String>,
+    /// The folder to start in; `None` is the caller's.
+    pub dir: Option<PathBuf>,
 }
 
 pub fn plan_launch(profile: &Profile, args: Vec<String>) -> LaunchPlan {
     let mut set = profile.env.clone();
     set.push(("CLAUDE_CONFIG_DIR".into(), profile.config_dir.to_string_lossy().into_owned()));
     set.push(("CCS_PROFILE".into(), profile.name.as_str().into()));
-    LaunchPlan { unset: PROVIDER_VARS.iter().map(|s| s.to_string()).collect(), set, args }
+    LaunchPlan { unset: PROVIDER_VARS.iter().map(|s| s.to_string()).collect(), set, args, dir: None }
 }
 
 /// The plan as POSIX shell, for `eval "$(ccs env work)"`.
@@ -198,6 +200,8 @@ pub struct Overview {
     pub findings: Vec<Finding>,
     pub is_default: bool,
     pub kits: Vec<String>,
+    /// The profile's folder, where `t` opens a shell.
+    pub dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -856,6 +860,17 @@ pub struct AwsRow {
 pub enum ImportOutcome {
     Created { name: String, region: Option<String> },
     Skipped { aws: String, reason: String },
+}
+
+/// One line of `ccs import aws`, the same in the CLI and the TUI.
+impl std::fmt::Display for ImportOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ImportOutcome::Created { name, region: Some(r) } => write!(f, "✓ {name} (bedrock, {r})"),
+            ImportOutcome::Created { name, region: None } => write!(f, "! {name} (bedrock, no region: set AWS_REGION in its profile.env)"),
+            ImportOutcome::Skipped { aws, reason } => write!(f, "- {aws}: {reason}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

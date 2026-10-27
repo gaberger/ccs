@@ -3,7 +3,7 @@
 //! `Browser` keeps the library, kits and attachments, and records each call.
 
 use ccs::adapters::primary::tui::{draw, draw_picker, Exit, Key, Picker, State};
-use ccs::domain::{CcsError, Finding, Kind, LibItem, LibraryRemoved, ListEntry, Overview, ProfileName, Use};
+use ccs::domain::{AwsRow, CcsError, Finding, ImportOutcome, Kind, LibItem, LibraryRemoved, ListEntry, Overview, ProfileName, Use};
 use ccs::ports::Browser;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -20,7 +20,8 @@ fn item(kind: Kind, folder: &str, n: &str) -> LibItem {
 }
 
 struct Fake {
-    profiles: Vec<&'static str>,
+    profiles: RefCell<Vec<String>>,
+    old_layout: RefCell<bool>,
     default: RefCell<Option<String>>,
     attached: RefCell<BTreeMap<String, Vec<String>>>,
     kits: RefCell<BTreeMap<String, Vec<Use>>>,
@@ -44,7 +45,8 @@ impl Fake {
         let mut attached = BTreeMap::new();
         attached.insert("work".to_string(), vec!["net".to_string()]);
         Fake {
-            profiles: profiles.to_vec(),
+            profiles: RefCell::new(profiles.iter().map(|p| p.to_string()).collect()),
+            old_layout: RefCell::new(false),
             default: RefCell::new(None),
             attached: RefCell::new(attached),
             kits: RefCell::new(kits),
@@ -65,6 +67,21 @@ impl Fake {
         self.items.borrow_mut().extend((0..n).map(|i| item(Kind::Skill, "bulk", &format!("s{i:03}"))));
         self
     }
+    /// Adds `n` empty kits `k00…`, which sort between eng and net, for scrolling.
+    fn many_kits(self, n: usize) -> Self {
+        self.kits.borrow_mut().extend((0..n).map(|i| (format!("k{i:02}"), vec![])));
+        self
+    }
+    /// An earlier ccs left its layout, so the import list offers migrate.
+    fn old_layout(self) -> Self {
+        *self.old_layout.borrow_mut() = true;
+        self
+    }
+    fn no_kits(self) -> Self {
+        self.kits.borrow_mut().clear();
+        self.attached.borrow_mut().clear();
+        self
+    }
     fn called(&self) -> Vec<String> {
         self.calls.borrow().clone()
     }
@@ -76,13 +93,14 @@ impl Fake {
 impl Browser for Fake {
     fn profiles(&self) -> Vec<ListEntry> {
         self.profiles
+            .borrow()
             .iter()
             .map(|p| ListEntry {
                 name: name(p),
                 current: false,
-                is_default: self.default.borrow().as_deref() == Some(*p),
-                kits: self.attached.borrow().get(*p).cloned().unwrap_or_default(),
-                provider: if *p == "lab" { "anthropic".into() } else { "bedrock sso@us-east-1".into() },
+                is_default: self.default.borrow().as_deref() == Some(p.as_str()),
+                kits: self.attached.borrow().get(p).cloned().unwrap_or_default(),
+                provider: if p == "lab" { "anthropic".into() } else { "bedrock sso@us-east-1".into() },
             })
             .collect()
     }
@@ -94,6 +112,7 @@ impl Browser for Fake {
             findings: vec![Finding::Pass("config dir ok".into()), Finding::Fail("claude is not on PATH".into())],
             is_default: false,
             kits: self.attached.borrow().get(n.as_str()).cloned().unwrap_or_default(),
+            dir: PathBuf::from(format!("/profiles/{}", n.as_str())),
         })
     }
     fn set_default(&self, n: &ProfileName) -> Result<(), CcsError> {
@@ -204,6 +223,54 @@ impl Browser for Fake {
     fn complete_path(&self, typed: &str) -> Vec<String> {
         ["~/skills/", "~/src/a/", "~/src/b/", "~/notes.md"].iter().filter(|c| c.starts_with(typed)).map(|c| c.to_string()).collect()
     }
+    fn new_profile(&self, n: &str, from: Option<&ProfileName>) -> Result<(), CcsError> {
+        if ProfileName::parse(n).is_err() {
+            return Err(CcsError::Usage(format!("bad profile name '{n}'")));
+        }
+        if self.profiles.borrow().iter().any(|p| p == n) {
+            return Err(CcsError::Exists(n.into()));
+        }
+        self.log(format!("new_profile {n} {}", from.map_or("-", |f| f.as_str())));
+        if let Some(kits) = from.and_then(|f| self.attached.borrow().get(f.as_str()).cloned()) {
+            self.attached.borrow_mut().insert(n.into(), kits);
+        }
+        let mut all = self.profiles.borrow_mut();
+        all.push(n.into());
+        all.sort();
+        Ok(())
+    }
+    fn edit_profile(&self, n: &ProfileName) -> Result<(), CcsError> {
+        self.log(format!("edit_profile {}", n.as_str()));
+        Ok(())
+    }
+    fn needs_migrate(&self) -> bool {
+        *self.old_layout.borrow()
+    }
+    fn migrate(&self) -> Result<Vec<String>, CcsError> {
+        self.log("migrate".into());
+        *self.old_layout.borrow_mut() = false;
+        Ok(vec!["shared/ is now kit shared".into()])
+    }
+    fn import_claude(&self) -> Result<Vec<String>, CcsError> {
+        self.log("import_claude".into());
+        Ok(vec!["skills/humanize: already in the library".into()])
+    }
+    fn aws_profiles(&self) -> Result<Vec<AwsRow>, CcsError> {
+        Ok(vec![AwsRow { aws: "dev".into(), imported_as: None }, AwsRow { aws: "sso".into(), imported_as: Some("work".into()) }])
+    }
+    fn import_aws(&self, names: &[String], all: bool) -> Result<Vec<ImportOutcome>, CcsError> {
+        self.log(format!("import_aws {} {all}", names.join(",")));
+        let mut out = vec![];
+        for n in if all { vec!["dev".to_string(), "sso".to_string()] } else { names.to_vec() } {
+            if n == "sso" {
+                out.push(ImportOutcome::Skipped { aws: n, reason: "ccs profile 'work' already exists".into() });
+            } else {
+                self.profiles.borrow_mut().push(n.clone());
+                out.push(ImportOutcome::Created { name: n, region: Some("us-east-1".into()) });
+            }
+        }
+        Ok(out)
+    }
 }
 
 fn screen(state: &State) -> String {
@@ -233,13 +300,8 @@ fn typed(state: &mut State, b: &dyn Browser, text: &str) {
 
 use Key::{Char, Down, Enter, Esc, Right, Tab, Up};
 
-/// Rows: lab, work, kits, eng, net, library. Downs from the top.
-const LAB: usize = 0;
+/// Profiles: lab, work. Downs from the top.
 const WORK: usize = 1;
-const KITS: usize = 2;
-const ENG: usize = 3;
-const NET: usize = 4;
-const LIBRARY: usize = 5;
 
 fn at(row: usize) -> State {
     let b = Fake::new();
@@ -258,14 +320,11 @@ fn line_with<'a>(screen: &'a str, text: &str) -> &'a str {
 // ── The list ─────────────────────────────────────────────────────────────────
 
 #[test]
-fn rows_are_profiles_with_their_kits_then_kits_then_the_library() {
+fn the_profiles_section_lists_profiles_with_their_kits() {
     let b = Fake::new();
     let s = State::new(&b);
     let out = screen(&s);
-    for want in ["lab", "work +net", "kits", "eng", "net", "◆ library"] {
-        assert!(out.contains(want), "missing {want:?}:\n{out}");
-    }
-    let order: Vec<usize> = ["▶ lab", "work +net", "── kits", "  eng", "  net", "◆ library"].iter().map(|w| out.find(w).unwrap_or_else(|| panic!("{w}\n{out}"))).collect();
+    let order: Vec<usize> = ["▶ lab", "work +net"].iter().map(|w| out.find(w).unwrap_or_else(|| panic!("{w}\n{out}"))).collect();
     assert!(order.windows(2).all(|p| p[0] < p[1]), "{out}");
 }
 
@@ -278,7 +337,7 @@ fn moving_stops_at_the_ends() {
     for _ in 0..20 {
         s.handle(&b, Down);
     }
-    assert!(line_with(&screen(&s), "◆ library").contains('▶'), "{}", screen(&s));
+    assert_eq!(s.selected_profile(), Some("work"), "the end of the section");
 }
 
 #[test]
@@ -300,12 +359,12 @@ fn search_filters_profiles_and_enter_launches_the_match() {
 }
 
 #[test]
-fn no_profiles_still_shows_kits_and_the_library_and_says_how_to_start() {
+fn no_profiles_says_how_to_start_and_enter_launches_nothing() {
     let b = Fake::with(&[]);
     let mut s = State::new(&b);
     let out = screen(&s);
-    assert!(out.contains("ccs new <name>") && out.contains("◆ library"), "{out}");
-    assert_eq!(press(&mut s, &b, &[Enter]), None, "the kits heading does not launch");
+    assert!(out.contains("none yet · n makes one"), "{out}");
+    assert_eq!(press(&mut s, &b, &[Enter]), None);
 }
 
 // ── A profile ────────────────────────────────────────────────────────────────
@@ -349,7 +408,7 @@ fn the_kits_tab_attaches_and_detaches_with_space() {
 fn a_kit_shows_the_library_tree_with_its_picks() {
     let b = Fake::new();
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Down, Down, Down, Down]);
+    press(&mut s, &b, &[Char('2'), Down]);
     let out = screen(&s);
     assert!(line_with(&out, "net/").contains("[x]"), "net/ is picked:\n{out}");
     assert!(line_with(&out, "nqe/").contains("[·]"), "nqe/ is picked through net/:\n{out}");
@@ -363,7 +422,7 @@ fn a_kit_shows_the_library_tree_with_its_picks() {
 fn space_picks_an_item_or_a_folder_and_explains_a_pick_from_above() {
     let b = Fake::new();
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Down, Down, Down, Down, Tab]);
+    press(&mut s, &b, &[Char('2'), Down, Tab]);
     // Tree rows: humanize, net/, inspect-edge, nqe/, find-nqe-query.
     press(&mut s, &b, &[Char(' ')]);
     assert_eq!(b.called(), ["set_use net skills/humanize true"]);
@@ -380,7 +439,7 @@ fn space_picks_an_item_or_a_folder_and_explains_a_pick_from_above() {
 fn a_kit_claude_md_tab_shows_the_instructions_and_e_edits_them() {
     let b = Fake::new();
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Down, Down, Down, Down, Right, Right]);
+    press(&mut s, &b, &[Char('2'), Down, Right, Right]);
     assert!(screen(&s).contains("NET RULES"), "{}", screen(&s));
     press(&mut s, &b, &[Char('e')]);
     assert!(s.wants_editor());
@@ -389,7 +448,7 @@ fn a_kit_claude_md_tab_shows_the_instructions_and_e_edits_them() {
     assert_eq!(b.called(), ["edit_kit net"]);
     // A kit with no instructions says how to start them.
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Down, Down, Down, Right, Right]);
+    press(&mut s, &b, &[Char('2'), Right, Right]);
     assert!(screen(&s).contains("e writes"), "{}", screen(&s));
 }
 
@@ -397,12 +456,12 @@ fn a_kit_claude_md_tab_shows_the_instructions_and_e_edits_them() {
 fn n_makes_a_kit_from_the_heading_and_x_deletes_one_after_asking() {
     let b = Fake::new();
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Down, Down, Char('n')]);
+    press(&mut s, &b, &[Char('2'), Char('n')]);
     typed(&mut s, &b, "write");
     press(&mut s, &b, &[Enter]);
     assert_eq!(b.called(), ["new_kit write"]);
-    assert!(screen(&s).contains("write"), "{}", screen(&s));
-    press(&mut s, &b, &[Down, Char('x')]);
+    assert!(screen(&s).contains("▶ write"), "the new kit is selected:\n{}", screen(&s));
+    press(&mut s, &b, &[Home, Char('x')]);
     assert!(screen(&s).contains("Delete kit eng? y/n"), "{}", screen(&s));
     press(&mut s, &b, &[Char('n')]);
     assert_eq!(b.called().len(), 1);
@@ -420,9 +479,7 @@ fn n_makes_a_kit_from_the_heading_and_x_deletes_one_after_asking() {
 
 fn library_skills(b: &Fake) -> State {
     let mut s = State::new(b);
-    for _ in 0..LIBRARY {
-        s.handle(b, Down);
-    }
+    s.handle(b, Char('3'));
     s.handle(b, Tab);
     s
 }
@@ -516,10 +573,7 @@ fn x_deletes_after_asking_and_names_the_kits_that_used_it() {
 fn the_agents_tab_lists_agents() {
     let b = Fake::new();
     let mut s = State::new(&b);
-    for _ in 0..LIBRARY {
-        s.handle(&b, Down);
-    }
-    press(&mut s, &b, &[Right]);
+    press(&mut s, &b, &[Char('3'), Down]);
     let out = screen(&s);
     assert!(out.contains("hex/") && out.contains("rev"), "{out}");
     assert!(!out.contains("humanize"));
@@ -543,14 +597,13 @@ fn the_footer_shows_the_keys_for_where_you_are() {
     assert!(screen(&State::new(&b)).contains("⏎ launch"));
     assert!(screen(&library_skills(&b)).contains("a add"));
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Down, Down, Down, Down, Tab]);
+    press(&mut s, &b, &[Char('2'), Down, Tab]);
     assert!(screen(&s).contains("space pick"), "{}", screen(&s));
 }
 
 #[test]
 fn ui_is_a_command_and_a_reserved_name() {
     assert!(ProfileName::parse("ui").is_err());
-    let _ = (LAB, KITS, ENG, NET, WORK);
 }
 
 // ── Organizing (ADR-2610261643 §9) ───────────────────────────────────────────
@@ -638,7 +691,7 @@ fn r_renames_a_folder_or_a_kit() {
     press(&mut s, &b, &[Up, Char('r')]);
     assert_eq!(b.called().len(), 1, "an item is not renamed");
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Down, Down, Down, Char('r')]);
+    press(&mut s, &b, &[Char('2'), Char('r')]);
     typed(&mut s, &b, "engineering");
     press(&mut s, &b, &[Enter]);
     assert_eq!(b.called().last().unwrap(), "rename_kit eng engineering");
@@ -649,19 +702,19 @@ fn r_renames_a_folder_or_a_kit() {
 fn a_kit_attaches_to_profiles_from_its_profiles_tab() {
     let b = Fake::new();
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Down, Down, Down, Down, Right, Right, Right, Tab]);
+    press(&mut s, &b, &[Char('2'), Down, Right, Right, Right, Tab]);
     let out = screen(&s);
     assert!(out.contains("[ ] lab") && out.contains("[x] work"), "{out}");
     press(&mut s, &b, &[Char(' ')]);
     assert_eq!(b.called(), ["attach net lab true"]);
-    assert!(screen(&s).contains("lab +net"), "{}", screen(&s));
+    assert!(screen(&s).contains("[x] lab"), "{}", screen(&s));
 }
 
 #[test]
 fn p_shows_only_what_a_kit_picks_and_tabs_count() {
     let b = Fake::new();
     let mut s = State::new(&b);
-    press(&mut s, &b, &[Down, Down, Down, Down]);
+    press(&mut s, &b, &[Char('2'), Down]);
     assert!(screen(&s).contains("Skills (2)"), "inspect-edge and find-nqe-query:\n{}", screen(&s));
     press(&mut s, &b, &[Tab, Char('p')]);
     let out = screen(&s);
@@ -836,4 +889,277 @@ fn the_launch_screen_pages_too() {
     assert!(picker_screen(&p).contains("▶ work"));
     keys(&mut p, &b, &[Home]);
     assert!(picker_screen(&p).contains("▶ lab"));
+}
+
+// A ticked row below the fold is scrolled into view (ADR-2610261643 §11).
+// With many_kits(30) the kits are eng, k00…k29, net: work's ticked net is row 32.
+
+#[test]
+fn the_launch_screen_shows_a_ticked_kit_below_the_fold() {
+    let b = Fake::new().many_kits(30);
+    let mut p = Picker::new(&b, Some("work"));
+    let out = picker_screen(&p);
+    assert!(out.contains("[x] net"), "net is ticked, so it is in view:\n{out}");
+    keys(&mut p, &b, &[Tab]);
+    let out = picker_screen(&p);
+    assert!(out.contains("[x] net"), "tab puts the cursor on a row in view, so the view stays:\n{out}");
+    let mut p = Picker::new(&b, Some("lab"));
+    assert!(!picker_screen(&p).contains("net"), "lab ticks nothing, so the top shows");
+    keys(&mut p, &b, &[Down]);
+    assert!(picker_screen(&p).contains("[x] net"), "moving to work shows its kit:\n{}", picker_screen(&p));
+}
+
+#[test]
+fn a_profiles_kits_tab_shows_a_ticked_kit_below_the_fold() {
+    let b = Fake::new().many_kits(30);
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Down, Right]);
+    let out = screen(&s);
+    assert!(out.contains("[x] net"), "{out}");
+    press(&mut s, &b, &[Tab]);
+    assert!(screen(&s).contains("[x] net"), "{}", screen(&s));
+}
+
+#[test]
+fn a_kits_skills_tab_shows_what_it_picks_below_the_fold() {
+    let b = Fake::new().bulk(60);
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('2'), Down]);
+    let out = screen(&s);
+    assert!(line_with(&out, "net/").contains("[x]"), "net/ is row 62 of 66:\n{out}");
+}
+
+// ── Everything the CLI does (ADR-2610261643 §12) ─────────────────────────────
+
+#[test]
+fn n_on_a_profile_makes_one_and_selects_it() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('n')]);
+    assert!(screen(&s).contains("New profile name:"), "{}", screen(&s));
+    typed(&mut s, &b, "zed");
+    press(&mut s, &b, &[Enter]);
+    assert_eq!(b.called(), ["new_profile zed -"]);
+    let out = screen(&s);
+    assert!(out.contains("▶ zed"), "the new profile, sorted after work, is selected:\n{out}");
+    assert!(out.contains("made profile zed"), "{out}");
+}
+
+#[test]
+fn c_copies_the_highlighted_profile() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Down, Char('c')]);
+    assert!(screen(&s).contains("Copy work to:"), "{}", screen(&s));
+    typed(&mut s, &b, "work2");
+    press(&mut s, &b, &[Enter]);
+    assert_eq!(b.called(), ["new_profile work2 work"]);
+    assert!(screen(&s).contains("work2 +net"), "a copy keeps the kits:\n{}", screen(&s));
+}
+
+#[test]
+fn a_bad_or_taken_profile_name_says_why() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('n')]);
+    typed(&mut s, &b, "bad name");
+    press(&mut s, &b, &[Enter]);
+    assert!(screen(&s).contains("bad profile name 'bad name'"), "{}", screen(&s));
+    press(&mut s, &b, &[Char('n')]);
+    typed(&mut s, &b, "work");
+    press(&mut s, &b, &[Enter]);
+    assert!(screen(&s).contains("profile 'work' already exists"), "{}", screen(&s));
+    assert!(b.called().is_empty());
+}
+
+#[test]
+fn e_on_a_profile_edits_its_variables() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Down, Char('e')]);
+    assert!(s.wants_editor());
+    s.run_editor(&b);
+    assert_eq!(b.called(), ["edit_profile work"]);
+    assert!(screen(&s).contains("edited the variables of work"), "{}", screen(&s));
+}
+
+#[test]
+fn i_lists_what_can_be_imported() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('i')]);
+    let out = screen(&s);
+    assert!(out.contains("Import"), "{out}");
+    assert!(out.contains("~/.claude"), "{out}");
+    assert!(out.contains("aws dev"), "{out}");
+    assert!(line_with(&out, "aws sso").contains("→ work"), "an imported one names its profile:\n{out}");
+    assert!(out.contains("every AWS profile"), "{out}");
+    assert!(!out.contains("migrate"), "nothing to migrate:\n{out}");
+}
+
+#[test]
+fn i_imports_one_aws_profile_and_shows_the_result() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('i')]);
+    typed(&mut s, &b, "dev");
+    press(&mut s, &b, &[Enter]);
+    assert_eq!(b.called(), ["import_aws dev false"]);
+    assert!(screen(&s).contains("✓ dev (bedrock, us-east-1)"), "{}", screen(&s));
+    press(&mut s, &b, &[Esc]);
+    assert!(screen(&s).contains("dev"), "the new profile is in the list:\n{}", screen(&s));
+}
+
+#[test]
+fn i_imports_every_aws_profile_or_claude_home() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('i')]);
+    typed(&mut s, &b, "every");
+    press(&mut s, &b, &[Enter]);
+    assert_eq!(b.called(), ["import_aws  true"]);
+    assert!(screen(&s).contains("- sso: ccs profile 'work' already exists"), "{}", screen(&s));
+    press(&mut s, &b, &[Esc, Char('i')]);
+    typed(&mut s, &b, "claude");
+    press(&mut s, &b, &[Enter]);
+    assert_eq!(b.called().last().unwrap(), "import_claude");
+    assert!(screen(&s).contains("already in the library"), "{}", screen(&s));
+}
+
+#[test]
+fn migrate_is_offered_first_only_when_an_old_layout_is_here() {
+    let b = Fake::new().old_layout();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('i')]);
+    assert!(screen(&s).contains("migrate"), "{}", screen(&s));
+    press(&mut s, &b, &[Enter]);
+    assert_eq!(b.called(), ["migrate"]);
+    assert!(screen(&s).contains("shared/ is now kit shared"), "{}", screen(&s));
+}
+
+#[test]
+fn the_profile_footer_names_the_new_keys() {
+    let out = screen(&at(WORK));
+    for k in ["n new", "c copy", "e edit", "i import"] {
+        assert!(out.contains(k), "{k}:\n{out}");
+    }
+}
+
+#[test]
+fn a_ticked_kit_above_the_view_is_scrolled_back_to() {
+    let b = Fake::new().many_kits(30);
+    b.set_kits(&name("lab"), &["eng".into()]).unwrap();
+    let mut p = Picker::new(&b, Some("work"));
+    assert!(!picker_screen(&p).contains("eng"), "work's net is in view, at the bottom");
+    keys(&mut p, &b, &[Up]);
+    assert!(picker_screen(&p).contains("[x] eng"), "lab ticks eng, row 0:\n{}", picker_screen(&p));
+}
+
+#[test]
+fn with_no_profiles_n_makes_the_first_one() {
+    let b = Fake::with(&[]);
+    let mut s = State::new(&b);
+    let out = screen(&s);
+    assert!(line_with(&out, "none yet").contains('▶'), "the start is the empty section's row:\n{out}");
+    assert!(out.contains("n makes one"), "{out}");
+    press(&mut s, &b, &[Char('n')]);
+    typed(&mut s, &b, "zed");
+    press(&mut s, &b, &[Enter]);
+    assert_eq!(b.called(), ["new_profile zed -"], "a profile, not a kit");
+    assert!(screen(&s).contains("▶ zed"), "{}", screen(&s));
+}
+
+// ── Sections: a menu bar, one list at a time (ADR-2610261643 §13) ────────────
+
+#[test]
+fn the_menu_bar_shows_one_section_at_a_time() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    let out = screen(&s);
+    assert!(out.contains("Profiles │ Kits │ Library"), "{out}");
+    assert!(out.contains("▶ lab") && !out.contains("  eng"), "profiles only:\n{out}");
+    press(&mut s, &b, &[Char('2')]);
+    let out = screen(&s);
+    assert!(out.contains("▶ eng") && out.contains("  net") && !out.contains("lab"), "kits only:\n{out}");
+    press(&mut s, &b, &[Char('3')]);
+    let out = screen(&s);
+    assert!(out.contains("▶ skills") && out.contains("  agents"), "the library:\n{out}");
+    assert!(out.contains("humanize"), "skills shows the tree:\n{out}");
+    press(&mut s, &b, &[Down]);
+    assert!(screen(&s).contains("rev"), "agents shows the agents:\n{}", screen(&s));
+}
+
+#[test]
+fn each_section_keeps_its_row() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('2'), Down, Char('1')]);
+    assert!(screen(&s).contains("▶ lab"), "{}", screen(&s));
+    press(&mut s, &b, &[Char('2')]);
+    assert!(screen(&s).contains("▶ net"), "{}", screen(&s));
+}
+
+#[test]
+fn n_makes_what_the_section_holds() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('2'), Char('n')]);
+    assert!(screen(&s).contains("New kit name:"), "{}", screen(&s));
+    press(&mut s, &b, &[Esc, Char('1'), Char('n')]);
+    assert!(screen(&s).contains("New profile name:"), "{}", screen(&s));
+}
+
+#[test]
+fn an_empty_kits_section_says_how_to_start() {
+    let b = Fake::new().no_kits();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Char('2')]);
+    assert!(screen(&s).contains("none yet"), "{}", screen(&s));
+    press(&mut s, &b, &[Char('n')]);
+    typed(&mut s, &b, "net2");
+    press(&mut s, &b, &[Enter]);
+    assert_eq!(b.called(), ["new_kit net2"]);
+}
+
+// ── A shell in the profile's folder (ADR-2610261643 §14) ─────────────────────
+
+#[test]
+fn the_overview_offers_a_shell_in_the_profile_folder() {
+    let out = screen(&at(WORK));
+    assert!(line_with(&out, "/profiles/work").contains("t opens a shell here"), "{out}");
+}
+
+#[test]
+fn t_on_a_profile_leaves_for_a_shell_and_does_nothing_elsewhere() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    assert_eq!(press(&mut s, &b, &[Down, Char('t')]), Some(Exit::Shell("work".into())));
+    let mut s = State::new(&b);
+    assert_eq!(press(&mut s, &b, &[Char('2'), Char('t')]), None, "a kit has no shell");
+}
+
+/// A narrow terminal stacks the list over the body instead of cutting the body off.
+#[test]
+fn a_narrow_terminal_stacks_the_list_over_the_body() {
+    let b = Fake::new();
+    let s = State::new(&b);
+    let mut t = Terminal::new(TestBackend::new(30, 30)).unwrap();
+    t.draw(|f| draw(f, &s)).unwrap();
+    let buf = t.backend().buffer();
+    let out = buf.content().chunks(30).map(|row| row.iter().map(|c| c.symbol()).collect::<String>()).collect::<Vec<_>>().join("\n");
+    assert!(out.contains("Profiles │ Kits │ Library"), "the whole menu bar:\n{out}");
+    assert!(out.contains("▶ lab") && out.contains("work +net"), "{out}");
+    let (list, overview) = (out.find("work +net").unwrap(), out.find("⬡ lab").unwrap_or_else(|| panic!("the overview shows:\n{out}")));
+    assert!(list < overview, "the body is under the list:\n{out}");
+}
+
+#[test]
+fn a_narrow_launch_screen_stacks_providers_over_kits() {
+    let b = Fake::new();
+    let p = Picker::new(&b, Some("work"));
+    let mut t = Terminal::new(TestBackend::new(30, 20)).unwrap();
+    t.draw(|f| draw_picker(f, &p)).unwrap();
+    let out = t.backend().buffer().content().chunks(30).map(|row| row.iter().map(|c| c.symbol()).collect::<String>()).collect::<Vec<_>>().join("\n");
+    let line = |t: &str| out.lines().position(|l| l.contains(t)).unwrap_or_else(|| panic!("no {t}:\n{out}"));
+    assert!(line("▶ work") < line("[x] net"), "kits on a line under the providers:\n{out}");
 }

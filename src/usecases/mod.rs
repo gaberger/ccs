@@ -100,6 +100,29 @@ pub fn new_profile(store: &dyn ProfileStore, name: &ProfileName, from: Option<&P
     store.create(name, from)
 }
 
+/// `ccs new`, from a typed name: an empty profile gets the status line segment;
+/// a copy gets `from`'s settings instead.
+pub fn make_profile(store: &dyn ProfileStore, raw: &str, from: Option<&ProfileName>, ccs_bin: &str) -> Result<ProfileName, CcsError> {
+    let name = ProfileName::parse(raw)?;
+    new_profile(store, &name, from)?;
+    if from.is_none() {
+        seed_statusline(store, &name, ccs_bin)?;
+    }
+    Ok(name)
+}
+
+/// A shell in the profile's folder, with the variables a launch sets (ADR-2610261643 §14).
+pub fn shell_plan(store: &dyn ProfileStore, name: &ProfileName) -> Result<LaunchPlan, CcsError> {
+    let profile = load(store, &existing(store, name.as_str())?)?;
+    Ok(LaunchPlan { dir: Some(store.folder(name)), ..plan_launch(&profile, vec![]) })
+}
+
+/// Open a profile's `profile.env` in the editor.
+fn profile_edit(store: &dyn ProfileStore, editor: &dyn Editor, name: &ProfileName) -> Result<(), CcsError> {
+    existing(store, name.as_str())?;
+    editor.edit(&store.env_file(name))
+}
+
 pub fn default_name(store: &dyn ProfileStore) -> Option<String> {
     store.default_name()
 }
@@ -623,6 +646,7 @@ pub fn overview(app: &App, name: &ProfileName) -> Result<Overview, CcsError> {
         findings: doctor(app.store, app.kits, app.lib, app.legacy, name, app.claude_available)?,
         is_default: app.store.default_name().as_deref() == Some(name.as_str()),
         kits: app.store.kits(name),
+        dir: app.store.folder(name),
         env: profile.env,
     })
 }
@@ -635,6 +659,9 @@ pub struct App<'a> {
     pub legacy: &'a dyn Legacy,
     pub paths: &'a dyn PathInput,
     pub editor: &'a dyn Editor,
+    pub aws: &'a dyn AwsProfiles,
+    /// This program, for the status line command a new profile gets.
+    pub ccs_bin: String,
     pub claude_available: bool,
     /// The resolved profile, marked in the list.
     pub current: Option<String>,
@@ -710,5 +737,26 @@ impl Browser for App<'_> {
     }
     fn complete_path(&self, typed: &str) -> Vec<String> {
         self.paths.complete(typed)
+    }
+    fn new_profile(&self, name: &str, from: Option<&ProfileName>) -> Result<(), CcsError> {
+        make_profile(self.store, name, from, &self.ccs_bin).map(|_| ())
+    }
+    fn edit_profile(&self, name: &ProfileName) -> Result<(), CcsError> {
+        profile_edit(self.store, self.editor, name)
+    }
+    fn needs_migrate(&self) -> bool {
+        needs_migrate(self.legacy)
+    }
+    fn migrate(&self) -> Result<Vec<String>, CcsError> {
+        migrate(self.store, self.lib, self.kits, self.legacy)
+    }
+    fn import_claude(&self) -> Result<Vec<String>, CcsError> {
+        import(self.lib, self.kits, self.legacy)
+    }
+    fn aws_profiles(&self) -> Result<Vec<AwsRow>, CcsError> {
+        aws_status(self.store, self.aws)
+    }
+    fn import_aws(&self, names: &[String], all: bool) -> Result<Vec<ImportOutcome>, CcsError> {
+        import_aws(self.store, self.aws, names, all, None, &self.ccs_bin)
     }
 }
