@@ -27,7 +27,7 @@ your stock `~/.claude`. The decisions are in
 - Claude Code (`claude` on your PATH), with `--plugin-dir`
 - macOS (Apple silicon or Intel) or Linux (x86_64) for a release; any Unix from source
 - From a release: the GitHub CLI, `gh`, logged in (the repository is private)
-- From source: Rust 1.88+ (`cargo`); `ratatui` is the one dependency
+- From source: Rust 1.88+ (`cargo`), because `ratatui` 0.30, the one dependency, declares it
 
 ## Install
 
@@ -87,12 +87,14 @@ ccs doctor [<name>]            check a profile and its kits; exits 1 on a failur
 ccs which                      print the resolved profile
 ccs ui                         the same Home, from anywhere
 ccs statusline [-- <cmd…>]     status line segment; wraps an existing status line command
+ccs statusline --auto          what every launch sets: the segment, then the project's or profile's own status line
 ccs import                     copy ~/.claude skills, agents, CLAUDE.md into the library (kit 'imported')
 ccs import aws [<p>…] [--all] [--region <r>]
                                list AWS CLI profiles, or import them as Bedrock profiles
 ccs migrate                    convert the shared/ and native layout of earlier versions
 ccs upgrade [--check | <ver>]  install the latest release (or <ver>) over this ccs
 ccs version                    print the version
+ccs sync                       reserved; not built yet, so it refuses and says what to copy instead
 
 ccs library list [skills|agents|plugins] | add <path|owner/repo|git URL> [--in <folder>] | mkdir skills/<folder>
             mv <entry> <folder|/> | rename skills/<folder>/ <name> | rm <entry> | show <entry> | edit <entry>
@@ -165,6 +167,7 @@ where you are and which profile is current:
 Home           1 · Choose a profile, 2 · Choose kits, 3 · ⏎ start; space ticks a kit · tab switches lists
                each list ends with its actions: + New profile · ⇣ Import · ◆ Library · + New kit
                → (or e) opens the profile or kit · s saves the ticks as its default
+               n new profile (new kit on the kit list) · i import · l the library
 a profile      ⏎ Launch · its kits (space adds or removes; the highlighted one shows what it holds;
                ⏎ opens it) · Variables (⏎ edits profile.env) · default · copy · shell · folder, doctor
 a kit          what it holds, one line per entry with its count (space removes; ⏎ views or opens)
@@ -172,8 +175,8 @@ a kit          what it holds, one line per entry with its count (space removes; 
 the library    from a kit: the tree with [x] picks for it (space picks, p picked only)
                from Home (l): manage it: space mark · m move · + to kit · a add · n folder
                r rename · x delete · e edit · v view · u update plugins
-everywhere     ←→ skills, agents, plugins (in the library) · ↑↓ PgUp/PgDn Home/End · / search
-               ← or esc back (esc in the library) · q quit
+everywhere     ←→ skills, agents, plugins (in the library) · ↑↓ (or k j) PgUp/PgDn Home/End (or g G) · / search
+               ← or esc back (esc in the library) · q or Ctrl-C quit
 the mouse      click a row to select it, click it again to open or run it · click a [ ] box to tick it
                click 3 · ⏎ start to launch · click the breadcrumb to go back · right click: back · wheel scrolls
 ```
@@ -200,10 +203,17 @@ your AWS config. The AWS profile `default` becomes `aws-default`. Existing
 profiles are skipped, never overwritten. See
 [ADR-2610261238](docs/adrs/ADR-2610261238-import-aws-profiles.md).
 
-**Status line.** Every profile made by `ccs new` or `ccs import aws` shows
-`⬡ <profile> +<kits> · <provider>` in the status line, for example
-`⬡ claude-bedrock +net · bedrock claude-bedrock@us-east-1`. To keep a status
-line script you already have, wrap it in the profile's `config/settings.json`:
+**Status line.** Every launch shows `⬡ <profile> +<kits> · <provider>` in
+the status line, for example
+`⬡ claude-bedrock +net · bedrock claude-bedrock@us-east-1`. ccs passes
+`--settings` with the status line `ccs statusline --auto`, which ranks above a
+project's own. `--auto` prints the segment, then runs the first other status
+line it finds in the project's `.claude/settings.local.json`, the project's
+`.claude/settings.json`, or the profile's `config/settings.json`. A status line
+script you already have keeps working, with nothing to wrap.
+
+To wrap a command by hand, for example in a settings file that ccs does not
+launch:
 
 ```json
 { "statusLine": { "type": "command",
@@ -215,7 +225,9 @@ segment. See [ADR-2610261237](docs/adrs/ADR-2610261237-statusline-segment.md).
 
 **Migrating from an earlier ccs.** `ccs migrate` moves `shared/` into
 `library/…/shared/` and a kit `shared` attached to every profile; each
-profile's own items into `library/…/<profile>/` and a kit of that name; and
+profile's own items into `library/…/<profile>/` and a kit named after the
+profile (lowercased, `_` and `.` turned into `-`, and a `p-` prefix when that
+is still not a valid kit name); and
 the old `native` registration into `ccs import`. An item whose name the
 library already has (a profile's own copy of a shared skill) is not moved: it
 stays in that profile's config dir, where Claude Code still loads it, and
@@ -245,8 +257,8 @@ src/
   adapters/primary/tui.rs              — the ratatui TUI; talks to ports::Browser only
   lib.rs                               — composition root
   main.rs                              — entry point
-tests/                                 — the gate: domain, profiles, kits, plugins, migrate, upgrade, the TUI, the real binary
-.github/workflows/                     — CI (the gate on every push) and Release (on a vX.Y.Z tag)
+tests/                                 — the gate: domain, profiles, kits, plugins, migrate, upgrade, assets, boundaries, the TUI, the real binary
+.github/workflows/                     — CI (the gate on pushes to main and on pull requests) and Release (on a vX.Y.Z tag)
 docs/adrs/                             — decisions
 start.sh                               — build and run, or --install
 ```
@@ -256,8 +268,10 @@ start.sh                               — build and run, or --install
 `ccs` reads the profile and its kits, rebuilds each kit from the library, then
 builds a launch plan: unset the provider variables inherited from your shell
 (so a Bedrock export cannot leak into a personal profile), set the profile's
-variables, `CLAUDE_CONFIG_DIR`, `CCS_PROFILE` and `CCS_KITS`, and put
-`--plugin-dir` for each kit in front of your arguments. Then it `exec`s
+variables, `CLAUDE_CONFIG_DIR`, `CCS_PROFILE` and `CCS_KITS`, and put these
+in front of your arguments: `--settings` with the status line, `--plugin-dir`
+for each kit and for each plugin the kits pick, and
+`--append-system-prompt-file` when a kit has instructions. Then it `exec`s
 `claude`, so there is no wrapper process left between you and Claude Code.
 
 The code is hexagonal, built with [hexa](https://github.com/gaberger/hexa); see
@@ -276,6 +290,7 @@ the TUI (a primary adapter) imports `ports/` only.
 
 | Variable | Effect |
 |---|---|
+| `HOME` | Required; ccs stops if it is unset. `~/.claude-profiles` and `~/.claude` are found from it. |
 | `CCS_HOME` | Where profiles, the library and kits live. Default `~/.claude-profiles`. |
 | `CCS_PROFILE` | Selects a profile when no argument or pin file does. |
 | `CCS_CLAUDE_BIN` | Program to launch instead of `claude`. The tests use a script that prints its arguments. |
@@ -284,3 +299,4 @@ the TUI (a primary adapter) imports `ports/` only.
 | `CCS_GH_BIN` | Program to run instead of `gh`, for `ccs upgrade`. The tests use a fake. |
 | `CCS_REPO` | Where `ccs upgrade` looks for releases. Default `gaberger/ccs`. |
 | `VISUAL`, `EDITOR` | The editor `edit` and the TUI's `e` open. Default `vi`. |
+| `SHELL` | The shell a profile's `shell` opens in the TUI. Default `/bin/sh`. |
