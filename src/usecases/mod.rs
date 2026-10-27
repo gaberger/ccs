@@ -4,13 +4,13 @@
 //! ports as parameters and never picks the adapter.
 
 use crate::domain::{
-    aws_profile_env, ccs_name_for_aws, git_source, check_env, compose_status, default_asset_name, default_settings, item_name,
+    aws_profile_env, ccs_name_for_aws, git_source, launch_settings, next_statusline, settings_statusline, statusline_dir, check_env, compose_status, default_asset_name, default_settings, item_name,
     kit_args, kit_name_for_profile, plan_launch, provider_label, rewrite_folder, render_exports, resolve, resolve_kit, status_segment, with_kits, AwsRow,
     CcsError, Finding, ImportOutcome, Kind, KitContents, KitName, LaunchPlan, LegacyItem, LibItem, LibraryRemoved,
     ListEntry, Overview, Profile, ProfileName, Use, Wrapped,
 };
 use crate::ports::{
-    AwsProfiles, Browser, CommandRunner, Editor, Fetcher, KitStore, Launcher, Legacy, Library, PathInput, PinLocator, ProfileStore,
+    AwsProfiles, Browser, CommandRunner, Editor, Fetcher, KitStore, TextFiles, Launcher, Legacy, Library, PathInput, PinLocator, ProfileStore,
 };
 use std::path::Path;
 
@@ -54,6 +54,7 @@ pub fn prepare_launch(
     name: &ProfileName,
     chosen: Option<Vec<String>>,
     args: Vec<String>,
+    ccs_bin: &str,
 ) -> Result<(LaunchPlan, Vec<String>), CcsError> {
     let profile = store.load(name)?;
     let wanted = chosen.unwrap_or_else(|| store.kits(name));
@@ -81,7 +82,9 @@ pub fn prepare_launch(
     }
     dirs.extend(plugins.into_iter().map(|p| p.source));
     let prompt = if prompt.is_empty() { None } else { Some(kits.write_prompt(&names, &prompt)?) };
-    let plan = with_kits(plan_launch(&profile, args), &names, kit_args(&dirs, prompt.as_deref()));
+    // The launch's own status line ranks above a project's, so the profile always shows.
+    let extra = ["--settings".to_string(), launch_settings(ccs_bin)].into_iter().chain(kit_args(&dirs, prompt.as_deref())).collect();
+    let plan = with_kits(plan_launch(&profile, args), &names, extra);
     Ok((plan, warnings))
 }
 
@@ -188,6 +191,31 @@ pub fn exports(store: &dyn ProfileStore, name: &ProfileName) -> Result<String, C
 }
 
 /// The status line (ADR-2610261237): the segment, in front of a wrapped command's output.
+/// `ccs statusline --auto`, the status line every launch sets: the segment, then
+/// the first other status line of the project's local settings, its shared
+/// settings, or the profile's settings, run with the same stdin.
+pub fn statusline_auto(runner: &dyn CommandRunner, files: &dyn TextFiles, vars: &[(String, String)], stdin: &[u8]) -> String {
+    let payload = String::from_utf8_lossy(stdin);
+    let mut places = Vec::new();
+    if let Some(dir) = statusline_dir(&payload) {
+        let dir = Path::new(&dir).join(".claude");
+        places.push(dir.join("settings.local.json"));
+        places.push(dir.join("settings.json"));
+    }
+    if let Some((_, cfg)) = vars.iter().find(|(k, v)| k == "CLAUDE_CONFIG_DIR" && !v.is_empty()) {
+        places.push(Path::new(cfg).join("settings.json"));
+    }
+    let commands: Vec<Option<String>> = places.iter().map(|p| files.read(p).and_then(|t| settings_statusline(&t))).collect();
+    let wrapped = match next_statusline(&commands) {
+        None => Wrapped::Nothing,
+        Some(cmd) => match runner.run(&["/bin/sh".into(), "-c".into(), cmd.clone()], stdin) {
+            Some(out) => Wrapped::Output(out),
+            None => Wrapped::Failed(cmd),
+        },
+    };
+    compose_status(status_segment(vars), wrapped)
+}
+
 pub fn statusline(runner: &dyn CommandRunner, vars: &[(String, String)], stdin: &[u8], wrap: &[String]) -> String {
     let wrapped = if wrap.is_empty() {
         Wrapped::Nothing

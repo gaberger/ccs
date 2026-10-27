@@ -125,6 +125,11 @@ pub trait Editor {
     fn edit(&self, path: &std::path::Path) -> Result<(), CcsError>;
 }
 
+/// Reads text files that may not exist: the settings a status line looks through.
+pub trait TextFiles {
+    fn read(&self, path: &std::path::Path) -> Option<String>;
+}
+
 /// Runs another program, for wrapping an existing status line command.
 pub trait CommandRunner {
     /// Run `argv` with `stdin`; return its stdout, or `None` when it could not start.

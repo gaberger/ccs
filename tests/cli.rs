@@ -1,7 +1,7 @@
 //! End-to-end gate: run the real `ccs` binary. "It compiles" is not "it works".
 //!
-//! `CCS_CLAUDE_BIN=env` makes `ccs` exec `env` instead of `claude`, so the test
-//! reads back exactly the environment and arguments `claude` would receive.
+//! `CCS_CLAUDE_BIN` points at a script that runs `env` instead of `claude`, so
+//! the test reads back exactly the environment and arguments `claude` would receive.
 
 use std::fs;
 use std::path::PathBuf;
@@ -24,6 +24,11 @@ impl Env {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("home/.claude")).unwrap();
         fs::create_dir_all(root.join("cwd")).unwrap();
+        // `env` stands in for claude; the launch's leading `--settings <json>` (its
+        // status line, tested in tests/kits.rs) is dropped first, since env has no such flag.
+        let claude = root.join("claude");
+        fs::write(&claude, "#!/bin/sh\n[ \"$1\" = --settings ] && shift 2\nexec env \"$@\"\n").unwrap();
+        fs::set_permissions(&claude, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         Env { root }
     }
 
@@ -33,7 +38,7 @@ impl Env {
             .current_dir(self.root.join("cwd"))
             .env("HOME", self.root.join("home"))
             .env("CCS_HOME", self.root.join("profiles"))
-            .env("CCS_CLAUDE_BIN", "env")
+            .env("CCS_CLAUDE_BIN", self.root.join("claude"))
             .env_remove("CCS_PROFILE")
             .env_remove("VISUAL")
             .env_remove("EDITOR");
@@ -213,6 +218,37 @@ fn statusline_survives_a_missing_wrapped_script() {
     let out = with_stdin(cmd, "{}");
     assert!(out.status.success(), "a status line command must not crash the bar");
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "⬡ work · anthropic │ ⚠ statusline failed: /nonexistent/sl.sh\n");
+}
+
+/// The status line every launch sets: the profile first, then the project's own line.
+#[test]
+fn statusline_auto_puts_the_profile_before_the_projects_own_line() {
+    let e = Env::new();
+    let proj = e.root.join("proj");
+    fs::create_dir_all(proj.join(".claude")).unwrap();
+    let line = |cmd: &str| format!(r#"{{"statusLine": {{"type": "command", "command": "{cmd}"}}}}"#);
+    let run = |cfg: Option<&std::path::Path>, project: &std::path::Path| {
+        let mut cmd = e.ccs(&["statusline", "--auto"]);
+        cmd.env("CCS_PROFILE", "work").env("CCS_KITS", "base,dev").env_remove("CLAUDE_CONFIG_DIR");
+        if let Some(c) = cfg {
+            cmd.env("CLAUDE_CONFIG_DIR", c);
+        }
+        let out = with_stdin(cmd, &format!(r#"{{"workspace": {{"project_dir": "{}"}}}}"#, project.display()));
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+    fs::write(proj.join(".claude/settings.json"), line("echo hexa-loop")).unwrap();
+    assert_eq!(run(None, &proj), "⬡ work +base +dev · anthropic │ hexa-loop\n");
+    fs::write(proj.join(".claude/settings.local.json"), line("echo mine")).unwrap();
+    assert_eq!(run(None, &proj), "⬡ work +base +dev · anthropic │ mine\n", "local settings come first");
+
+    let cfg = e.root.join("cfg");
+    fs::create_dir_all(&cfg).unwrap();
+    fs::write(cfg.join("settings.json"), line("'/x/ccs' statusline -- echo profile-line")).unwrap();
+    let bare = e.root.join("bare");
+    fs::create_dir_all(&bare).unwrap();
+    assert_eq!(run(Some(&cfg), &bare), "⬡ work +base +dev · anthropic │ profile-line\n", "no project line: the profile's");
+    assert_eq!(run(None, &bare), "⬡ work +base +dev · anthropic\n", "nothing else: the segment alone");
 }
 
 #[test]

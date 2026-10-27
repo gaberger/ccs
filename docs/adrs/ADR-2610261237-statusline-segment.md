@@ -54,6 +54,37 @@ Add `ccs statusline [-- <command> [args…]]`.
 - `ProfileStore::write_settings_if_absent`.
 - Gate: `cargo test && hexa analyze . --grade A`.
 
+## 2. A launch sets its own status line (decided 2026-10-27)
+
+The user: "the status line doesn't tell me what profile i am on or what kits".
+Found: a project's `.claude/settings.json` ranks above the profile's
+`settings.json`, and hexa writes one with `statusLine: hexa loop | head -1`.
+In this repository, and in four others of the user's (APIDIFF, deskman,
+forward-mcp, fwd), the profile's status line never ran. The `⬡ Loop (ccs)` the
+user saw is hexa's, and `ccs` there is the project name.
+
+Measured first: `claude --settings '{"statusLine":…}'` in this repository
+showed the `--settings` line, not the project's. Command-line settings rank
+above project settings.
+
+- Every launch passes `--settings` with `ccs statusline --auto` as the status
+  line. `--auto` prints the segment, then runs the first status line it finds
+  in the project's `.claude/settings.local.json`, its `.claude/settings.json`,
+  then the profile's `settings.json`, with the same stdin, and shows its first
+  line after `│`. The project folder comes from the payload's
+  `workspace.project_dir`.
+- `ccs statusline -- X` in a settings file stands for X; a plain `ccs
+  statusline`, or `--auto`, is skipped, so it never runs itself.
+- A session not started by ccs (plain `claude`) is untouched: ccs is not in it.
+- A user's own `--settings` after the profile name comes later on the command
+  line than ccs's.
+
+**Done** (tests: 3 in `tests/domain.rs`, 1 in `tests/cli.rs`, 1 in
+`tests/kits.rs`; the fake `claude` of `tests/cli.rs` became a script, since
+`env` rejects `--settings`). Real run (2026-10-27): `ccs claude-bedrock-gary`
+in this repository showed `⬡ claude-bedrock-gary +base · bedrock
+claude-bedrock-gary@us-east-1 │ ⬡ Loop (ccs): nothing recorded…`.
+
 ## References
 
 - ADR-2610261212 — one config directory per profile

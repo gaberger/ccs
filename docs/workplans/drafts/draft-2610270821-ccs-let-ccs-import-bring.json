@@ -1,0 +1,15 @@
+{
+  "adr": "ADR-2026-04-11-0227",
+  "created_at": "2026-10-27T08:21:30.617084-04:00",
+  "id": "draft-2610270821-ccs-let-ccs-import-bring",
+  "kind": "workplan-draft",
+  "next_steps": [
+    "Run /hexa-feature-dev to expand this draft into a full workplan",
+    "Or run `hexa plan drafts approve draft-2610270821-ccs-let-ccs-import-bring.json`",
+    "Or run `hexa plan drafts clear --name draft-2610270821-ccs-let-ccs-import-bring`"
+  ],
+  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "origin": "auto-invoke",
+  "prompt": "ccs: let ccs import bring over the marketplace plugins installed in the stock ~/.claude (plugins/installed_plugins.json and known_marketplaces.json), as library plugins cloned from their GitHub source, and pick them in kit imported. ~/.claude stays read-only. ADR-2610261643 §15 lists this as Not done. Gate: cargo test && hexa analyze . --grade A+ --exit-code, plus a migrate-style test on a hand-built ~/.claude with one github-sourced marketplace plugin.",
+  "status": "pending-planner"
+}

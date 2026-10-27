@@ -151,8 +151,7 @@ impl Env {
     /// The args the fake claude received.
     fn launched(&self, a: &[&str]) -> (Vec<String>, String) {
         let out = self.ok(a);
-        let argv = out.lines().filter_map(|l| l.strip_prefix("ARG ")).map(String::from).collect();
-        (argv, out)
+        (without_settings(out.lines().filter_map(|l| l.strip_prefix("ARG ")).map(String::from).collect()), out)
     }
 }
 
@@ -419,4 +418,24 @@ fn renaming_a_kit_follows_it_into_every_profile() {
     e.err(&["kit", "rename", "network", "eng"]);
     e.err(&["kit", "rename", "ghost", "x"]);
     e.err(&["kit", "rename", "network", "Bad"]);
+}
+
+/// The launch's leading `--settings <json>` (its status line), which every
+/// launch has; `a_launch_sets_the_ccs_status_line` in tests/kits.rs checks it.
+fn without_settings(argv: Vec<String>) -> Vec<String> {
+    match argv.as_slice() {
+        [flag, _, rest @ ..] if flag == "--settings" => rest.to_vec(),
+        _ => argv,
+    }
+}
+
+#[test]
+fn a_launch_sets_the_ccs_status_line_above_any_projects() {
+    let e = Env::new();
+    e.ok(&["new", "work"]);
+    let out = e.ok(&["work", "--resume"]);
+    let argv: Vec<&str> = out.lines().filter_map(|l| l.strip_prefix("ARG ")).collect();
+    assert_eq!(argv[0], "--settings", "{argv:?}");
+    assert!(argv[1].contains("statusline --auto") && argv[1].contains(env!("CARGO_BIN_EXE_ccs")), "{argv:?}");
+    assert_eq!(argv[2..], ["--resume"]);
 }

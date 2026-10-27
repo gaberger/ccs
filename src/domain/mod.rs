@@ -218,6 +218,8 @@ pub enum Command {
     Which,
     Help,
     Statusline { wrap: Vec<String> },
+    /// The status line a launch sets: the segment, then the project's or profile's own line.
+    StatuslineAuto,
     ImportAws { profiles: Vec<String>, all: bool, region: Option<String> },
     /// Convert the layout earlier versions left (ADR-2610261643 §5).
     Migrate,
@@ -325,6 +327,7 @@ pub fn parse_command(args: &[String], is_profile: impl Fn(&str) -> bool) -> Resu
         },
         Some("statusline") => match args.get(1).map(String::as_str) {
             None => Command::Statusline { wrap: vec![] },
+            Some("--auto") if args.len() == 2 => Command::StatuslineAuto,
             Some("--") if args.len() > 2 => Command::Statusline { wrap: args[2..].to_vec() },
             Some(_) => return Err(CcsError::Usage("ccs statusline [-- <command> [args…]]".into())),
         },
@@ -426,17 +429,31 @@ impl Use {
 /// Nested objects and lists are skipped, so `author.name` is never taken for it.
 /// Enough JSON for a manifest; anything it cannot read is `None`.
 pub fn manifest_field(json: &str, key: &str) -> Option<String> {
-    let mut chars = json.trim_start().strip_prefix('{')?.chars().peekable();
-    let read_string = |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<String> {
+    match json_top(json, key)? {
+        JsonField::Str(s) => Some(s),
+        JsonField::Raw(_) => None,
+    }
+}
+
+/// A top-level field's value: a string, or the raw text of an object or list.
+enum JsonField {
+    Str(String),
+    Raw(String),
+}
+
+fn json_top(json: &str, key: &str) -> Option<JsonField> {
+    let body = json.trim_start().strip_prefix('{')?;
+    let mut it = body.char_indices();
+    let read_string = |it: &mut std::str::CharIndices| -> Option<String> {
         let mut out = String::new();
         loop {
-            match chars.next()? {
+            match it.next()?.1 {
                 '"' => return Some(out),
-                '\\' => match chars.next()? {
+                '\\' => match it.next()?.1 {
                     'n' => out.push('\n'),
                     't' => out.push('\t'),
                     'u' => {
-                        let hex: String = chars.by_ref().take(4).collect();
+                        let hex: String = it.by_ref().take(4).map(|(_, c)| c).collect();
                         out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
                     }
                     c => out.push(c),
@@ -445,15 +462,15 @@ pub fn manifest_field(json: &str, key: &str) -> Option<String> {
             }
         }
     };
-    let (mut depth, mut want_key, mut current) = (0usize, true, None::<String>);
-    while let Some(c) = chars.next() {
+    let (mut depth, mut want_key, mut current, mut start) = (0usize, true, None::<String>, None::<usize>);
+    while let Some((i, c)) = it.next() {
         match c {
             '"' => {
-                let text = read_string(&mut chars)?;
+                let text = read_string(&mut it)?;
                 if depth == 0 && want_key {
                     current = Some(text);
                 } else if depth == 0 && current.as_deref() == Some(key) {
-                    return Some(text);
+                    return Some(JsonField::Str(text));
                 }
             }
             ':' if depth == 0 => want_key = false,
@@ -461,9 +478,19 @@ pub fn manifest_field(json: &str, key: &str) -> Option<String> {
                 want_key = true;
                 current = None;
             }
-            '{' | '[' => depth += 1,
+            '{' | '[' => {
+                if depth == 0 && current.as_deref() == Some(key) {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
             '}' | ']' if depth == 0 => return None,
-            '}' | ']' => depth -= 1,
+            '}' | ']' => {
+                depth -= 1;
+                if let (0, Some(s)) = (depth, start) {
+                    return Some(JsonField::Raw(body[s..=i].to_string()));
+                }
+            }
             _ => {}
         }
     }
@@ -883,6 +910,53 @@ pub fn compose_status(segment: Option<String>, wrapped: Wrapped) -> String {
         (Some(seg), false) => format!("{seg} │ {theirs}"),
         (None, _) => theirs,
     }
+}
+
+/// The `statusLine.command` of a settings file, if it has one.
+pub fn settings_statusline(settings: &str) -> Option<String> {
+    match json_top(settings, "statusLine")? {
+        JsonField::Raw(obj) => manifest_field(&obj, "command"),
+        JsonField::Str(_) => None,
+    }
+}
+
+/// The status line to show after the segment: the first of `commands` (in
+/// precedence order) that is set. `ccs statusline -- X` stands for X; a plain
+/// `ccs statusline`, or `--auto`, wraps nothing, so the search goes on.
+pub fn next_statusline(commands: &[Option<String>]) -> Option<String> {
+    for cmd in commands.iter().flatten() {
+        let mut words = cmd.split_whitespace();
+        let program = words.next().unwrap_or("").trim_matches(['\'', '"']);
+        let ours = program.rsplit('/').next() == Some("ccs") && words.next() == Some("statusline");
+        if !ours {
+            return Some(cmd.clone());
+        }
+        if let Some((_, inner)) = cmd.split_once(" -- ") {
+            return Some(inner.trim().to_string());
+        }
+    }
+    None
+}
+
+/// The `--settings` JSON every launch passes. Command-line settings rank above
+/// a project's, so the profile and kits always show (ADR-2610261237 §2).
+pub fn launch_settings(ccs_bin: &str) -> String {
+    let command = format!("{} statusline --auto", shell_quote(ccs_bin));
+    format!("{{\"statusLine\":{{\"type\":\"command\",\"command\":\"{}\"}}}}", json_escape(&command))
+}
+
+/// The project folder a status line payload names: `workspace.project_dir`,
+/// else `workspace.current_dir`, else `cwd`.
+pub fn statusline_dir(payload: &str) -> Option<String> {
+    let workspace = match json_top(payload, "workspace") {
+        Some(JsonField::Raw(w)) => Some(w),
+        _ => None,
+    };
+    workspace
+        .as_deref()
+        .and_then(|w| manifest_field(w, "project_dir").or_else(|| manifest_field(w, "current_dir")))
+        .or_else(|| manifest_field(payload, "cwd"))
+        .filter(|d| !d.is_empty())
 }
 
 /// `settings.json` for a fresh profile: the `ccs` status line, nothing else.

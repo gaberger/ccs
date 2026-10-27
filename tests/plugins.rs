@@ -112,7 +112,7 @@ impl Env {
     }
     fn launched(&self, a: &[&str]) -> (Vec<String>, String) {
         let out = self.ok(a);
-        (out.lines().filter_map(|l| l.strip_prefix("ARG ")).map(String::from).collect(), out)
+        (without_settings(out.lines().filter_map(|l| l.strip_prefix("ARG ")).map(String::from).collect()), out)
     }
 }
 
@@ -270,4 +270,13 @@ fn removing_a_plugin_names_its_kits_and_a_launch_goes_on_without_it() {
     let (argv, out) = e.launched(&["work"]);
     assert!(!argv.iter().any(|a| a.contains("library/plugins")), "{argv:?}");
     assert!(out.contains("plugins/egm"), "the launch names what is gone: {out}");
+}
+
+/// The launch's leading `--settings <json>` (its status line), which every
+/// launch has; `a_launch_sets_the_ccs_status_line` in tests/kits.rs checks it.
+fn without_settings(argv: Vec<String>) -> Vec<String> {
+    match argv.as_slice() {
+        [flag, _, rest @ ..] if flag == "--settings" => rest.to_vec(),
+        _ => argv,
+    }
 }

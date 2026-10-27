@@ -22,7 +22,7 @@ pub mod usecases;
 
 use adapters::secondary::{
     aws_cli::AwsCli, exec_launcher::ExecLauncher, fs_kits::FsKitStore, fs_legacy::FsLegacy, fs_library::FsLibrary,
-    fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, git_fetcher::GitFetcher,
+    fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, fs_text::FsText, git_fetcher::GitFetcher,
     process_editor::ProcessEditor, process_runner::ProcessRunner,
 };
 use adapters::primary::tui;
@@ -137,11 +137,11 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             // The terminal is restored by now; launch exactly as `ccs <name>` does.
             tui::Exit::Launch(n) => {
                 let name = usecases::existing(&store, &n)?;
-                launch(&usecases::prepare_launch(&store, &kits, &lib, &name, None, vec![])?, &launcher)
+                launch(&usecases::prepare_launch(&store, &kits, &lib, &name, None, vec![], &ccs_bin())?, &launcher)
             }
             tui::Exit::LaunchWith { profile, kits: picked } => {
                 let name = usecases::existing(&store, &profile)?;
-                launch(&usecases::prepare_launch(&store, &kits, &lib, &name, Some(picked), vec![])?, &launcher)
+                launch(&usecases::prepare_launch(&store, &kits, &lib, &name, Some(picked), vec![], &ccs_bin())?, &launcher)
             }
             tui::Exit::Shell(n) => {
                 let plan = usecases::shell_plan(&store, &usecases::existing(&store, &n)?)?;
@@ -163,13 +163,13 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
                 return match tui::run_picker(&app(resolved.clone()), resolved.as_deref()).map_err(|e| CcsError::Io(format!("terminal: {e}")))? {
                     tui::Exit::LaunchWith { profile, kits: picked } => {
                         let name = usecases::existing(&store, &profile)?;
-                        launch(&usecases::prepare_launch(&store, &kits, &lib, &name, Some(picked), args)?, &launcher)
+                        launch(&usecases::prepare_launch(&store, &kits, &lib, &name, Some(picked), args, &ccs_bin())?, &launcher)
                     }
                     _ => Ok(0),
                 };
             }
             let name = resolve(profile)?;
-            launch(&usecases::prepare_launch(&store, &kits, &lib, &name, chosen, args)?, &launcher)
+            launch(&usecases::prepare_launch(&store, &kits, &lib, &name, chosen, args, &ccs_bin())?, &launcher)
         }
         Command::List => {
             let current = resolve(None).ok();
@@ -244,6 +244,15 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
         }
         Command::Which => {
             println!("{}", resolve(None)?.as_str());
+            Ok(0)
+        }
+        Command::StatuslineAuto => {
+            let mut stdin = Vec::new();
+            if !std::io::stdin().is_terminal() {
+                let _ = std::io::stdin().read_to_end(&mut stdin);
+            }
+            let vars: Vec<(String, String)> = std::env::vars().collect();
+            println!("{}", usecases::statusline_auto(&ProcessRunner, &FsText, &vars, &stdin));
             Ok(0)
         }
         Command::Statusline { wrap } => {

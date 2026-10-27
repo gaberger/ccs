@@ -355,3 +355,33 @@ fn the_provider_label_names_the_backend_and_its_account() {
     assert_eq!(provider_label(&v(&[("ANTHROPIC_BASE_URL", "http://x")])), "gateway");
     assert_eq!(provider_label(&[]), "anthropic");
 }
+
+/// ADR-2610261237 §2: a launch brings its own status line, above any project's.
+mod statusline_chain {
+    use ccs::domain::{launch_settings, next_statusline, parse_command, settings_statusline, Command};
+
+    #[test]
+    fn a_settings_file_names_its_status_line_command() {
+        let s = r#"{"theme": "dark", "statusLine": {"type": "command", "command": "hexa loop 2>/dev/null | head -1"}}"#;
+        assert_eq!(settings_statusline(s).as_deref(), Some("hexa loop 2>/dev/null | head -1"));
+        assert_eq!(settings_statusline(r#"{"theme": "dark"}"#), None);
+        assert_eq!(settings_statusline("not json"), None);
+    }
+
+    #[test]
+    fn the_first_status_line_that_is_not_ours_runs_after_the_segment() {
+        let s = |v: &[Option<&str>]| next_statusline(&v.iter().map(|o| o.map(String::from)).collect::<Vec<_>>());
+        assert_eq!(s(&[None, Some("hexa loop"), Some("'/x/ccs' statusline")]).as_deref(), Some("hexa loop"));
+        assert_eq!(s(&[None, None, Some("'/x/ccs' statusline -- ~/sl.sh")]).as_deref(), Some("~/sl.sh"), "ours unwraps");
+        assert_eq!(s(&[Some("ccs statusline"), Some("hexa loop")]).as_deref(), Some("hexa loop"), "a plain ccs line wraps nothing");
+        assert_eq!(s(&[None, None, Some("/usr/local/bin/ccs statusline --auto")]), None, "never itself");
+        assert_eq!(s(&[None, None, None]), None);
+        assert_eq!(s(&[Some("echo statusline ccs")]).as_deref(), Some("echo statusline ccs"), "only ccs's own command is skipped");
+    }
+
+    #[test]
+    fn a_launch_brings_its_own_status_line() {
+        assert_eq!(settings_statusline(&launch_settings("/b/ccs")).as_deref(), Some("'/b/ccs' statusline --auto"));
+        assert_eq!(parse_command(&["statusline".into(), "--auto".into()], |_| false).unwrap(), Command::StatuslineAuto);
+    }
+}
