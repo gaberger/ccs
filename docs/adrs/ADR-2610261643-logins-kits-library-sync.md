@@ -363,6 +363,27 @@ error for a missed bug; it now checks that the tests ran. Real run
 `b3a3595`; kit `dev` picked `plugins/egm`; `ccs probe -p …` loaded all 7
 `egm:` skills and 9 agents from `library/plugins/egm`, next to `.build/dev`.
 
+### 16. The highlighted kit opens (decided 2026-10-27)
+
+The user: "when selecting a kit i want to expand it". In the two lists that
+tick kits, the launch screen and a profile's Kits tab, the kit under the
+cursor opens in place: one dim line per `uses` entry with the items it gives
+(`skills/network/  31`), `not in the library` for an entry that gives none,
+`CLAUDE.md` when the kit has instructions, or `nothing picked yet`. Moving
+away closes it. No key: selecting is opening. The lines go below the kit, so
+the cursor, space and Enter still act on kits only. Entries, not items: one
+kit holds 76 agents.
+
+Tab into such a list now lands on the first ticked kit when it is in view,
+else as before; the kit you use opens, and the view does not move. Found by
+§11's tests: landing on the top row opened that kit and pushed the ticked kit
+out of view.
+
+**Done** (tests: 3 in `tests/tui.rs`). Injected bugs, each caught: the lines
+above the kit; a kit open without the focus; no `CLAUDE.md` line; each entry
+counted as the whole kit (missed at first, with one-entry kits only; test
+added); Tab ignoring the tick; the Kits tab not opening.
+
 ## Consequences
 
 - Skills from a kit are named `<kit>:<skill>` in Claude Code. A skill invoked

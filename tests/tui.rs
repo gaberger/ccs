@@ -1204,3 +1204,49 @@ fn a_kit_picks_a_plugin_on_its_plugins_tab() {
     assert_eq!(b.called(), ["set_use net plugins/egm true"]);
     assert!(line_with(&screen(&s), "egm").contains("[x]"), "{}", screen(&s));
 }
+
+// ── A highlighted kit opens up (ADR-2610261643 §16) ──────────────────────────
+// Fake kits: eng picks nothing; net picks skills/net/ (2 skills) and has instructions.
+
+#[test]
+fn the_launch_screen_opens_the_highlighted_kit() {
+    let b = Fake::new();
+    let mut p = Picker::new(&b, Some("work"));
+    assert!(!picker_screen(&p).contains("skills/net/"), "closed while the providers have the focus");
+    keys(&mut p, &b, &[Tab]);
+    let out = picker_screen(&p);
+    assert!(line_with(&out, "skills/net/").contains('2'), "tab lands on work's ticked kit, net, and opens it:\n{out}");
+    assert!(out.contains("CLAUDE.md"), "with its instructions:\n{out}");
+    keys(&mut p, &b, &[Up]);
+    let out = picker_screen(&p);
+    assert!(out.contains("nothing picked"), "eng is open:\n{out}");
+    assert!(!out.contains("skills/net/"), "net closed again:\n{out}");
+    assert_eq!(keys(&mut p, &b, &[Char(' '), Enter]), Some(Exit::LaunchWith { profile: "work".into(), kits: vec!["net".into(), "eng".into()] }), "space ticks eng, not a detail line");
+}
+
+#[test]
+fn a_profiles_kits_tab_opens_the_highlighted_kit() {
+    let b = Fake::new();
+    let mut s = State::new(&b);
+    press(&mut s, &b, &[Down, Right]);
+    assert!(!screen(&s).contains("skills/net/"), "closed until the list has the focus");
+    press(&mut s, &b, &[Tab, Down]);
+    let out = screen(&s);
+    assert!(line_with(&out, "skills/net/").contains('2'), "{out}");
+    press(&mut s, &b, &[Char(' ')]);
+    assert_eq!(b.called(), ["attach net work false"], "space acts on the kit");
+}
+
+#[test]
+fn each_entry_of_an_open_kit_counts_its_own_items() {
+    let b = Fake::new();
+    b.set_use("net", &Use::Item(Kind::Skill, "humanize".into()), true).unwrap();
+    b.set_use("net", &Use::Item(Kind::Skill, "gone".into()), true).unwrap();
+    let mut p = Picker::new(&b, Some("work"));
+    picker_screen(&p);
+    keys(&mut p, &b, &[Tab]);
+    let out = picker_screen(&p);
+    assert!(line_with(&out, "skills/net/").contains("  2"), "two items, not the kit's three:\n{out}");
+    assert!(line_with(&out, "skills/humanize").contains("  1"), "one item:\n{out}");
+    assert!(line_with(&out, "skills/gone").contains("not in the library"), "{out}");
+}

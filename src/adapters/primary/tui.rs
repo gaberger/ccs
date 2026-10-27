@@ -5,7 +5,7 @@
 //! `Browser` driving port. `State` takes keys and `draw` paints it, so tests
 //! drive the screen without a terminal; `run` is the only part that touches one.
 
-use crate::ports::{library_tree, pick, AwsImport, Browser, Entry, Finding, ItemKind, Name, Pick, ProfileOverview, ProfileRow, TreeRow};
+use crate::ports::{library_tree, pick, resolve_kit, AwsImport, LibraryItem, Browser, Entry, Finding, ItemKind, Name, Pick, ProfileOverview, ProfileRow, TreeRow};
 use std::collections::BTreeSet;
 use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use ratatui::crossterm::execute;
@@ -76,11 +76,13 @@ impl Scroll {
         self.reveal.set(row);
     }
 
-    /// `sel` if it is in view, else the top row in view: a list that takes the
-    /// focus then keeps the view it had.
-    fn in_view(&self, sel: usize) -> usize {
+    /// Where the cursor lands when a list takes the focus: the first ticked row
+    /// when it is in view (it opens, so it should be the one you use), else `sel`
+    /// when in view, else the top row in view. The view stays as it was.
+    fn in_view(&self, ticked: Option<usize>, sel: usize) -> usize {
         let (top, page) = (self.offset.get(), self.page.get().max(1));
-        if (top..top + page).contains(&sel) { sel } else { top }
+        let seen = |i: &usize| (top..top + page).contains(i);
+        ticked.filter(seen).or(Some(sel).filter(seen)).unwrap_or(top)
     }
 
     /// Page Up / Page Down move the view by a page too, as a pager does; other keys
@@ -356,6 +358,8 @@ pub struct State {
     counts: [usize; 3],
     /// Every kit's `uses`, for the labels on library rows.
     all_uses: Vec<(String, Vec<Entry>)>,
+    /// What each kit holds, as `kit_detail` lines, in `kits` order.
+    kit_details: Vec<Vec<String>>,
     /// Marked library rows, by path, for `m`, `k` and `x`.
     marks: BTreeSet<String>,
     /// On a kit: show only what it picks.
@@ -391,6 +395,7 @@ impl State {
             tree: vec![],
             counts: [0; 3],
             all_uses: vec![],
+            kit_details: vec![],
             marks: BTreeSet::new(),
             picked_only: false,
             uses: vec![],
@@ -510,6 +515,8 @@ impl State {
             _ => (vec![], None),
         };
         self.all_uses = self.kits.iter().map(|k| (k.clone(), b.kit_uses(k).unwrap_or_default())).collect();
+        let library = whole_library(b);
+        self.kit_details = self.all_uses.iter().map(|(k, u)| kit_detail(u, &library, b.kit_instructions(k).is_some())).collect();
         let mut trees = KINDS.map(|kind| {
             let (items, folders) = b.library(kind);
             (kind, library_tree(&items, &folders))
@@ -697,7 +704,7 @@ impl State {
             }
             Key::Tab if self.body_is_list() => {
                 self.focus = if self.focus == Focus::List { Focus::Body } else { Focus::List };
-                self.body_sel = self.body_scroll.in_view(self.body_sel);
+                self.body_sel = self.body_scroll.in_view(self.first_ticked(), self.body_sel);
             }
             Key::Enter => match (self.focus, self.row()) {
                 (Focus::List, Row::Profile(n)) => return Some(Exit::Launch(n.as_str().into())),
@@ -1145,6 +1152,41 @@ impl State {
     }
 }
 
+/// What a kit holds, one line per entry with the items it gives, then
+/// `CLAUDE.md` when it has instructions. Shown under the highlighted kit (ADR-2610261643 §16).
+fn kit_detail(uses: &[Entry], library: &[LibraryItem], instructions: bool) -> Vec<String> {
+    let width = uses.iter().map(|u| u.line().chars().count()).max().unwrap_or(0);
+    let mut out: Vec<String> = uses
+        .iter()
+        .map(|u| match resolve_kit(std::slice::from_ref(u), library).items.len() {
+            0 => format!("{:width$}  not in the library", u.line()),
+            n => format!("{:width$}  {n}", u.line()),
+        })
+        .collect();
+    if instructions {
+        out.push("CLAUDE.md".into());
+    }
+    if out.is_empty() {
+        out.push("nothing picked yet".into());
+    }
+    out
+}
+
+/// `rows` with `detail` opened under row `open`. The rows above it keep their
+/// places, so `open` is still the selected row.
+fn with_detail<'a>(mut rows: Vec<ListItem<'a>>, open: Option<usize>, detail: &[String]) -> Vec<ListItem<'a>> {
+    if let Some(i) = open.filter(|i| *i < rows.len()) {
+        let lines = detail.iter().map(|d| ListItem::new(format!("      {d}")).style(Style::default().fg(Color::DarkGray)));
+        rows.splice(i + 1..i + 1, lines);
+    }
+    rows
+}
+
+/// Every library item, of every kind.
+fn whole_library(b: &dyn Browser) -> Vec<LibraryItem> {
+    KINDS.iter().flat_map(|k| b.library(*k).0).collect()
+}
+
 /// `[x] name` with a green tick, or `[ ] name`.
 fn tick(on: bool, name: &str) -> Line<'static> {
     if on {
@@ -1365,13 +1407,14 @@ fn draw_body(frame: &mut Frame, state: &State, area: Rect) {
         }
         (Row::Profile(n), Tab::Kits) => {
             if state.kits.is_empty() {
-                frame.render_widget(Paragraph::new("No kits yet. Select ── kits ── and press n.").block(block), area);
+                frame.render_widget(Paragraph::new("No kits yet: 2 for Kits, then n.").block(block), area);
                 return;
             }
             let mine = state.profiles.iter().find(|p| p.name == n).map(|p| p.kits.clone()).unwrap_or_default();
             let rows: Vec<ListItem> =
                 state.kits.iter().map(|k| ListItem::new(tick(mine.contains(k), k))).collect();
-            render_list(frame, area, block, rows, selected, &state.body_scroll, None);
+            let detail = selected.and_then(|i| state.kit_details.get(i)).map(Vec::as_slice).unwrap_or_default();
+            render_list(frame, area, block, with_detail(rows, selected, detail), selected, &state.body_scroll, None);
         }
         (Row::ProfilesHeading, _) => frame.render_widget(Paragraph::new(PROFILES_TEXT).block(block), area),
         (Row::KitsHeading, _) => frame.render_widget(Paragraph::new(KITS_TEXT).block(block), area),
@@ -1466,6 +1509,8 @@ pub struct Picker {
     profiles: Vec<ProfileRow>,
     /// Every kit, with how many items it picks.
     kits: Vec<(String, usize)>,
+    /// What each kit holds, as `kit_detail` lines, in `kits` order.
+    details: Vec<Vec<String>>,
     sel: usize,
     kit_sel: usize,
     focus: Focus,
@@ -1483,20 +1528,23 @@ impl Picker {
             let (items, folders) = b.library(kind);
             (kind, library_tree(&items, &folders))
         });
-        let kits = b
+        let library = whole_library(b);
+        let (kits, details) = b
             .kits()
             .into_iter()
             .map(|k| {
                 let uses = b.kit_uses(&k).unwrap_or_default();
                 let n = trees.iter().map(|(kind, t)| t.iter().filter(|r| r.item.is_some() && pick(&uses, *kind, r) != Pick::No).count()).sum();
-                (k, n)
+                let detail = kit_detail(&uses, &library, b.kit_instructions(&k).is_some());
+                ((k, n), detail)
             })
-            .collect();
+            .unzip();
         let profiles = b.profiles();
         let sel = preselect.and_then(|p| profiles.iter().position(|r| r.name.as_str() == p)).unwrap_or(0);
         let mut picker = Picker {
             profiles,
             kits,
+            details,
             sel,
             kit_sel: 0,
             focus: Focus::List,
@@ -1544,7 +1592,8 @@ impl Picker {
             },
             Key::Tab if !self.kits.is_empty() => {
                 self.focus = if self.focus == Focus::List { Focus::Body } else { Focus::List };
-                self.kit_sel = self.kit_scroll.in_view(self.kit_sel);
+                let ticked = self.kits.iter().position(|(k, _)| self.ticked.contains(k));
+                self.kit_sel = self.kit_scroll.in_view(ticked, self.kit_sel);
             }
             Key::Char(' ') if self.focus == Focus::Body => {
                 if let Some((k, _)) = self.kits.get(self.kit_sel) {
@@ -1603,7 +1652,7 @@ pub fn draw_picker(frame: &mut Frame, p: &Picker) {
 
     let block = Block::default().borders(Borders::ALL).title(" Kits ").border_style(border(p.focus == Focus::Body));
     if p.kits.is_empty() {
-        frame.render_widget(Paragraph::new("No kits yet: ccs ui, then n on ── kits ──").block(block), right);
+        frame.render_widget(Paragraph::new("No kits yet: ccs ui, 2 for Kits, then n").block(block), right);
     } else {
         let width = p.kits.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
         let rows: Vec<ListItem> = p
@@ -1615,7 +1664,9 @@ pub fn draw_picker(frame: &mut Frame, p: &Picker) {
                 ListItem::new(line)
             })
             .collect();
-        render_list(frame, right, block, rows, (p.focus == Focus::Body).then_some(p.kit_sel), &p.kit_scroll, None);
+        let open = (p.focus == Focus::Body).then_some(p.kit_sel);
+        let detail = open.and_then(|i| p.details.get(i)).map(Vec::as_slice).unwrap_or_default();
+        render_list(frame, right, block, with_detail(rows, open, detail), open, &p.kit_scroll, None);
     }
 
     let hints = "↑↓ PgUp/PgDn choose · tab switch · space tick a kit · ⏎ launch · s save kits as this profile's default · q quit";

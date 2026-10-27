@@ -181,6 +181,7 @@ everywhere  i import: ~/.claude, an AWS profile, every AWS profile, or migrate a
             ↑↓ move · PgUp/PgDn a page · Home/End (g/G) first/last · mouse wheel
             ←→ tab · tab focus · / search · q quit
             a list of ticks opens scrolled to its first ticked row
+            in a list of kits, the highlighted kit opens: its entries, item counts, CLAUDE.md
 ```
 
 See [ADR-2610261643 §8](docs/adrs/ADR-2610261643-logins-kits-library-sync.md).

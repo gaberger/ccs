@@ -11,7 +11,7 @@ use crate::domain::{
 
 /// Re-exported so an adapter needs to import nothing but this module (rule 4).
 pub use crate::domain::{
-    front_matter_description, manifest_field, AwsRow as AwsProfileRow, ImportOutcome as AwsImport, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
+    front_matter_description, manifest_field, resolve_kit, AwsRow as AwsProfileRow, ImportOutcome as AwsImport, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
     Kind as ItemKind, KitName as Kit, LaunchPlan as Plan, LegacyItem as OldItem, LegacyLayout as OldLayout,
     LegacyProfile as OldProfile, LibItem as LibraryItem, LibraryRemoved as Removed, ListEntry as ProfileRow,
     Overview as ProfileOverview, Pick, Profile as LoadedProfile, ProfileName as Name, TreeRow, Use as Entry,
