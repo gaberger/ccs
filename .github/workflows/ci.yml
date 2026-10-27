@@ -1,0 +1,58 @@
+# The gate on every push and pull request: tests, clippy, and the hexa grade.
+# Release runs it too, before it builds anything (ADR-2610271000).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  HEXA_VERSION: 26.9.12
+  HEXA_SHA256: 5d3915de81132f3b003de2bac663404c8f5e3088d8f2c3feba39db4e1e88a078
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal -c clippy && rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: Test
+        # A vacuous gate is a failed gate: "0 passed" must fail, not pass.
+        run: |
+          cargo test --locked 2>&1 | tee test.log
+          passed=$(awk '/^test result:/ {s += $4} END {print s + 0}' test.log)
+          echo "passed: $passed"
+          test "$passed" -gt 0
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  grade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install hexa ${{ env.HEXA_VERSION }}
+        run: |
+          f=hexa-$HEXA_VERSION-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL -o "$f" "https://github.com/gaberger/hexa/releases/download/v$HEXA_VERSION/$f"
+          echo "$HEXA_SHA256  $f" | sha256sum -c -
+          tar xzf "$f" hexa && sudo install -m 0755 hexa /usr/local/bin/hexa
+      - name: Architecture grade
+        run: hexa analyze . --grade A+ --exit-code
