@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: explains-why-upgrade-misses-a-change
+expected_outcome: |
+  An explanation that ccs upgrade only sees published releases and nothing was released since v0.1.0, with an offer to cut a release; no version change and no tag, since the user only asked why.

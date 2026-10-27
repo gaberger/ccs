@@ -22,6 +22,8 @@ fn item(kind: Kind, folder: &str, n: &str) -> LibItem {
 struct Fake {
     profiles: RefCell<Vec<String>>,
     old_layout: RefCell<bool>,
+    /// The resolved profile, as `ccs` would launch it.
+    current: RefCell<Option<String>>,
     default: RefCell<Option<String>>,
     attached: RefCell<BTreeMap<String, Vec<String>>>,
     kits: RefCell<BTreeMap<String, Vec<Use>>>,
@@ -47,6 +49,7 @@ impl Fake {
         Fake {
             profiles: RefCell::new(profiles.iter().map(|p| p.to_string()).collect()),
             old_layout: RefCell::new(false),
+            current: RefCell::new(None),
             default: RefCell::new(None),
             attached: RefCell::new(attached),
             kits: RefCell::new(kits),
@@ -78,6 +81,10 @@ impl Fake {
         *self.old_layout.borrow_mut() = true;
         self
     }
+    fn current(self, p: &str) -> Self {
+        *self.current.borrow_mut() = Some(p.into());
+        self
+    }
     fn no_kits(self) -> Self {
         self.kits.borrow_mut().clear();
         self.attached.borrow_mut().clear();
@@ -98,7 +105,7 @@ impl Browser for Fake {
             .iter()
             .map(|p| ListEntry {
                 name: name(p),
-                current: false,
+                current: self.current.borrow().as_deref() == Some(p.as_str()),
                 is_default: self.default.borrow().as_deref() == Some(p.as_str()),
                 kits: self.attached.borrow().get(p).cloned().unwrap_or_default(),
                 provider: if p == "lab" { "anthropic".into() } else { "bedrock sso@us-east-1".into() },
@@ -404,7 +411,7 @@ fn the_kits_tab_attaches_and_detaches_with_space() {
     assert!(screen(&s).contains("work +net +eng"), "{}", screen(&s));
     press(&mut s, &b, &[Down, Char(' ')]);
     assert_eq!(b.called().last().unwrap(), "attach net work false");
-    assert!(line_with(&screen(&s), "work").contains("+eng") && !line_with(&screen(&s), "work").contains("+net"));
+    assert!(line_with(&screen(&s), "▶ work").contains("+eng") && !line_with(&screen(&s), "▶ work").contains("+net"));
 }
 
 // ── A kit ────────────────────────────────────────────────────────────────────
@@ -1249,4 +1256,51 @@ fn each_entry_of_an_open_kit_counts_its_own_items() {
     assert!(line_with(&out, "skills/net/").contains("  2"), "two items, not the kit's three:\n{out}");
     assert!(line_with(&out, "skills/humanize").contains("  1"), "one item:\n{out}");
     assert!(line_with(&out, "skills/gone").contains("not in the library"), "{out}");
+}
+
+// ── Which profile (ADR-2610261643 §17) ───────────────────────────────────────
+
+/// The top border of the left frame, and of the right one.
+fn titles(out: &str) -> (String, String) {
+    let top = out.lines().find(|l| l.contains('┌')).unwrap_or("").to_string();
+    let cut = top.char_indices().filter(|(_, c)| *c == '┌').nth(1).map(|(i, _)| i).unwrap_or(top.len());
+    (top[..cut].to_string(), top[cut..].to_string())
+}
+
+#[test]
+fn the_left_frame_names_the_current_profile_in_every_section() {
+    let b = Fake::new().current("work");
+    let mut s = State::new(&b);
+    for key in [Char('1'), Char('2'), Char('3')] {
+        press(&mut s, &b, &[key]);
+        let (left, _) = titles(&screen(&s));
+        assert!(left.contains("⬡ work"), "{key:?}: {left}");
+    }
+    let b = Fake::new();
+    let (left, _) = titles(&screen(&State::new(&b)));
+    assert!(left.contains("no profile"), "nothing resolved says so: {left}");
+}
+
+#[test]
+fn the_right_frame_names_what_it_shows() {
+    let b = Fake::new().current("work");
+    let mut s = State::new(&b);
+    assert!(titles(&screen(&s)).1.contains("profile lab"), "{}", screen(&s));
+    press(&mut s, &b, &[Down, Right]);
+    assert!(titles(&screen(&s)).1.contains("profile work"), "the Kits tab too: {}", screen(&s));
+    press(&mut s, &b, &[Char('2'), Down]);
+    assert!(titles(&screen(&s)).1.contains("kit net"), "{}", screen(&s));
+    press(&mut s, &b, &[Char('3'), Down]);
+    assert!(titles(&screen(&s)).1.contains("library · agents"), "{}", screen(&s));
+}
+
+#[test]
+fn the_launch_screen_says_what_enter_starts() {
+    let b = Fake::new();
+    let mut p = Picker::new(&b, Some("work"));
+    assert!(picker_screen(&p).contains("⏎ launch work +net"), "{}", picker_screen(&p));
+    keys(&mut p, &b, &[Tab, Char(' ')]);
+    assert!(picker_screen(&p).contains("⏎ launch work ·"), "no kits: {}", picker_screen(&p));
+    keys(&mut p, &b, &[Tab, Up]);
+    assert!(picker_screen(&p).contains("⏎ launch lab ·"), "{}", picker_screen(&p));
 }

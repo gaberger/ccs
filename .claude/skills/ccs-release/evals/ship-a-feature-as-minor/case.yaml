@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: ship-a-feature-as-minor
+expected_outcome: |
+  A minor release, 0.2.0: Cargo.toml and Cargo.lock both say 0.2.0 in one commit, an annotated tag v0.2.0 on that commit is pushed to origin, and the report says the GitHub workflow steps could not run here.

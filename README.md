@@ -182,6 +182,7 @@ everywhere  i import: ~/.claude, an AWS profile, every AWS profile, or migrate a
             ←→ tab · tab focus · / search · q quit
             a list of ticks opens scrolled to its first ticked row
             in a list of kits, the highlighted kit opens: its entries, item counts, CLAUDE.md
+            the left title names the current profile (ccs · ⬡ work); the right title what it shows
 ```
 
 See [ADR-2610261643 §8](docs/adrs/ADR-2610261643-logins-kits-library-sync.md).

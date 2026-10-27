@@ -384,6 +384,26 @@ above the kit; a kit open without the focus; no `CLAUDE.md` line; each entry
 counted as the whole kit (missed at first, with one-entry kits only; test
 added); Tab ignoring the tick; the Kits tab not opening.
 
+### 17. The TUI always names the profile (decided 2026-10-27)
+
+The user: "it isn't clear what profile we are working on" (asked where: the
+TUI). Since §13 the profiles list hides in the Kits and Library sections, and
+nothing else named the profile.
+
+- The left frame's title is `ccs · ⬡ <profile>`, the profile a bare `ccs`
+  launches (resolved: argument, pin file, `$CCS_PROFILE`, default), in every
+  section; `ccs · no profile` when none resolves.
+- The right frame's title names what it shows: `profile <name>`, `kit <name>`,
+  `library · skills|agents|plugins`, so a tick or an edit plainly acts on it.
+- The launch screen's footer starts with what Enter runs, as a command line:
+  `⏎ launch claude-bedrock-gary +base`, following the cursor and the ticks.
+
+**Done** (tests: 3 in `tests/tui.rs`). Injected bugs, each caught: a fixed left
+title; no title on a kit; the footer without the kits. One older test found its
+row by the word `work`, which the new title also holds; it now looks for
+`▶ work`. Real run: `ccs ui` showed `ccs · ⬡ claude-bedrock-gary` and
+`profile claude-bedrock-gary`, then `kit base` after `2`.
+
 ## Consequences
 
 - Skills from a kit are named `<kit>:<skill>` in Claude Code. A skill invoked

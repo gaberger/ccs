@@ -19,7 +19,15 @@
         "src/adapters/primary/tui.rs",
         "tests/plugins.rs",
         "docs/adrs/ADR-2610271000-release-and-upgrade.md",
-        "tests/upgrade.rs"
+        "tests/upgrade.rs",
+        ".claude/skills/ccs-release/SKILL.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/refuses-a-dirty-tree/without_skill/outputs/commands.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/refuses-a-dirty-tree/with_skill/outputs/commands.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/explains-why-upgrade-misses-a-change/with_skill/outputs/commands.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/explains-why-upgrade-misses-a-change/with_skill/outputs/report.txt",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/explains-why-upgrade-misses-a-change/without_skill/outputs/commands.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/ship-a-feature-as-minor/with_skill/outputs/commands.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/ship-a-feature-as-minor/without_skill/outputs/commands.md"
       ],
       "gate": "cargo test && hexa analyze . --grade A+ --exit-code",
       "pid": 65232,
@@ -51,7 +59,7 @@
           "title": "ccs sync over git"
         }
       ],
-      "updated": "2026-10-27T12:28:36.484469+00:00"
+      "updated": "2026-10-27T13:01:15.436522+00:00"
     },
     "a5898ad6-c8ae-4fce-9bb6-372f479aa638": {
       "adr": "ADR-2610261255",

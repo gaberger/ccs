@@ -1311,7 +1311,12 @@ pub fn draw(frame: &mut Frame, state: &State) {
 }
 
 fn draw_list(frame: &mut Frame, state: &State, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title(" ccs ").border_style(border(state.focus == Focus::List));
+    // The profile a bare `ccs` launches, in every section, so it is always clear (§17).
+    let title = match state.profiles.iter().find(|p| p.current) {
+        Some(p) => format!(" ccs · ⬡ {} ", p.name.as_str()),
+        None => " ccs · no profile ".to_string(),
+    };
+    let block = Block::default().borders(Borders::ALL).title(title).border_style(border(state.focus == Focus::List));
     let rows = state.rows();
     let items: Vec<ListItem> = rows
         .iter()
@@ -1396,6 +1401,13 @@ fn draw_body(frame: &mut Frame, state: &State, area: Rect) {
         return;
     }
     let selected = (state.focus == Focus::Body).then_some(state.body_sel);
+    // Name what the body shows, so a tick or an edit plainly acts on it (§17).
+    let block = match state.row() {
+        Row::Profile(n) => block.title(format!(" profile {} ", n.as_str())),
+        Row::Kit(k) => block.title(format!(" kit {k} ")),
+        Row::Library(kind) => block.title(format!(" library · {} ", kind.dir())),
+        Row::ProfilesHeading | Row::KitsHeading => block,
+    };
     match (state.row(), state.tab()) {
         (Row::Profile(_), Tab::Overview) => {
             let p = match &state.overview {
@@ -1669,8 +1681,13 @@ pub fn draw_picker(frame: &mut Frame, p: &Picker) {
         render_list(frame, right, block, with_detail(rows, open, detail), open, &p.kit_scroll, None);
     }
 
-    let hints = "↑↓ PgUp/PgDn choose · tab switch · space tick a kit · ⏎ launch · s save kits as this profile's default · q quit";
-    let text = p.message.clone().unwrap_or_else(|| hints.into());
+    // What Enter starts, spelled as the command line would be (§17).
+    let launch = match p.profiles.get(p.sel) {
+        Some(r) => format!("⏎ launch {}{}", r.name.as_str(), p.ticked.iter().map(|k| format!(" +{k}")).collect::<String>()),
+        None => "⏎ launch".into(),
+    };
+    let hints = format!("{launch} · ↑↓ choose · tab switch · space tick a kit · s save kits as default · q quit");
+    let text = p.message.clone().unwrap_or(hints);
     frame.render_widget(Paragraph::new(text).style(Style::default().fg(Color::DarkGray)), footer);
 }
 

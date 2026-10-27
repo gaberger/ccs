@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: refuses-a-dirty-tree
+expected_outcome: |
+  No release: the tree has an uncommitted change, so no version changes, no commit is made, no tag is created, and the user is told why and what to do.
