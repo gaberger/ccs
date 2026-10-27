@@ -140,6 +140,8 @@ pub trait Releases {
     fn probe(&self, binary: &std::path::Path) -> Result<String, CcsError>;
     /// Put `binary` in place of the running ccs, whole or not at all. Returns where.
     fn install(&self, binary: &std::path::Path) -> Result<std::path::PathBuf, CcsError>;
+    /// Remove a folder `download` made. Called after every attempt, so nothing is left.
+    fn discard(&self, dir: &std::path::Path);
 }
 
 /// Reads text files that may not exist: the settings a status line looks through.

@@ -107,6 +107,11 @@ So:
 
 ### 7. Sync across hosts with git
 
+**Not built (2026-10-27).** This section is the decision, not the present.
+Until phase 5 lands, `ccs sync` is reserved and refuses with "ccs sync is not
+built yet", and copying `$CCS_HOME/library/` by hand is the way to move the
+library. Before that date, `sync` was not reserved and went to `claude sync`.
+
 - `$CCS_HOME` is a git repo. ccs writes its `.gitignore`: `*/config/`,
   `.build/`, `.trash/`, `.default`. What syncs: `library/`, `kits/`, and each
   profile's `profile.env` and `kits`. What stays: login state, history, the
@@ -502,6 +507,23 @@ boxes ignored; a right click quitting Home; a double click launching; the
 breadcrumb ignored. Real run: SGR mouse codes into `ccs` in a pseudo-terminal;
 two clicks on `sticksandstrings` opened its page, a right click went back.
 
+### 21. An empty library says what to press (decided 2026-10-27)
+
+The user, on a new host: "i cant see plugins from ccs ui". The library there
+was empty, and its plugins tab said "Add one: ◆ library, then a" while already
+in the library. The footer said "←→ kind", which does not say that the plugins
+are two presses to the right.
+
+- In the library to manage, an empty tab names the step on that page: for
+  plugins, "press a, then type owner/repo", with
+  `google/elephant-goldfish-model` as the example. In a kit's picker, which has
+  no `a`, it points to ◆ Library on the start screen.
+- The library footers start with "←→ skills, agents, plugins · esc back", so a
+  narrow terminal cuts the rarest keys, not these.
+
+Evidence: three tests in `tests/tui.rs`, each failing before the change. Real
+run: the new build in an empty `$HOME`, library, → →, showed the new line.
+
 ## Consequences
 
 - Skills from a kit are named `<kit>:<skill>` in Claude Code. A skill invoked
@@ -554,7 +576,9 @@ two clicks on `sticksandstrings` opened its page, a right click went back.
    `--plugin-dir .build/imported` and `CCS_KITS=imported`. Also found: `ccs …
    | head` panicked on a closed pipe (an older bug); `main.rs` now restores the
    default SIGPIPE action (test added).
-5. `ccs sync` through a `Sync` port and a git adapter.
+5. `ccs sync` through a `Sync` port and a git adapter. **Not built.** `ccs sync` refuses (test
+   `sync_is_reserved_and_says_it_is_not_built`); draft workplan
+   `draft-2610261805-ccs-phase-5-ccs-sync`.
 
 Gate for every phase: `cargo test && hexa analyze . --grade A+ --exit-code`,
 plus a run of the real binary in a throwaway `$HOME`. Phase 2 adds a launch

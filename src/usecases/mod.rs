@@ -218,19 +218,23 @@ pub fn upgrade(rel: &dyn Releases, current: &str, target: Option<&str>, wanted: 
     }
     let asset = release_asset(&version, target);
     let dir = rel.download(&tag, &[asset.clone(), "SHA256SUMS.txt".into()])?;
-    let want = checksum_for(&rel.read(&dir.join("SHA256SUMS.txt"))?, &asset)
-        .ok_or_else(|| CcsError::Io(format!("SHA256SUMS.txt of {tag} has no line for {asset}; nothing installed")))?;
-    let got = rel.sha256(&dir.join(&asset))?;
-    if got != want {
-        return Err(CcsError::Io(format!("{asset}: checksum {got} is not the published {want}; nothing installed")));
-    }
-    let binary = rel.unpack(&dir.join(&asset))?;
-    let said = rel.probe(&binary).map_err(|e| CcsError::Io(format!("ccs {version}: {e}; nothing installed")))?;
-    if !said.contains(&version) {
-        return Err(CcsError::Io(format!("the downloaded ccs says '{said}', not {version}; nothing installed")));
-    }
-    let at = rel.install(&binary)?;
-    Ok(Upgraded::Installed { from: current.into(), to: version, at })
+    let installed = (|| {
+        let want = checksum_for(&rel.read(&dir.join("SHA256SUMS.txt"))?, &asset)
+            .ok_or_else(|| CcsError::Io(format!("SHA256SUMS.txt of {tag} has no line for {asset}; nothing installed")))?;
+        let got = rel.sha256(&dir.join(&asset))?;
+        if got != want {
+            return Err(CcsError::Io(format!("{asset}: checksum {got} is not the published {want}; nothing installed")));
+        }
+        let binary = rel.unpack(&dir.join(&asset))?;
+        let said = rel.probe(&binary).map_err(|e| CcsError::Io(format!("ccs {version}: {e}; nothing installed")))?;
+        if !said.contains(&version) {
+            return Err(CcsError::Io(format!("the downloaded ccs says '{said}', not {version}; nothing installed")));
+        }
+        rel.install(&binary)
+    })();
+    // Success or not, the download folder goes (drift report 2026-10-27).
+    rel.discard(&dir);
+    Ok(Upgraded::Installed { from: current.into(), to: version, at: installed? })
 }
 
 /// `ccs statusline --auto`, the status line every launch sets: the segment, then

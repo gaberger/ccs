@@ -29,6 +29,7 @@ pub const PROVIDER_VARS: &[&str] = &[
 const RESERVED: &[&str] = &[
     "list", "ls", "new", "import", "default", "env", "link", "doctor", "which", "help", "statusline", "skill", "skills",
     "agent", "agents", "claude-md", "claudemd", "ui", "shared", "kit", "kits", "library", "lib", "migrate", "upgrade", "version",
+    "sync",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -342,6 +343,12 @@ pub fn parse_command(args: &[String], is_profile: impl Fn(&str) -> bool) -> Resu
             return Err(CcsError::Gone("ccs claude-md is gone: instructions belong to a kit; write them with: ccs kit edit <kit>".into()))
         }
         Some("link") => return Err(CcsError::Gone("ccs link is gone: kits are built at launch, so there is nothing to link".into())),
+        // Decided (ADR-2610261643 §7), not built: say so rather than run `claude sync`.
+        Some("sync") => {
+            return Err(CcsError::Usage(
+                "ccs sync is not built yet; to move the library to another host, copy $CCS_HOME/library/ (never a profile's config/)".into(),
+            ))
+        }
         Some("migrate") => Command::Migrate,
         Some("version" | "--version" | "-V") => Command::Version,
         Some("upgrade") => match &args[1..] {
@@ -1106,7 +1113,7 @@ ccs — Claude Code profile switcher
 A profile is a login. A kit is a set of skills, agents and instructions.
 A launch is a profile plus kits. Nothing starts until you choose a profile.
 
-  ccs                            open the picker (when no profile is chosen)
+  ccs                            open Home: choose a profile and kits, then start (no terminal: launch the resolved profile)
   ccs <profile> [+kit…] [args…]  start claude with <profile>; +kit replaces its kits for this run
   ccs list                       list profiles with their kits (* = resolved)
   ccs new <name> [--from <p>]    make a profile (copies variables, kits, settings; never login)
@@ -1116,6 +1123,7 @@ A launch is a profile plus kits. Nothing starts until you choose a profile.
   ccs which                      print the resolved profile
   ccs ui                         browse profiles, kits and the library; launch from the list
   ccs statusline [-- <cmd…>]     status line segment; wraps an existing status line command
+  ccs statusline --auto          what every launch sets: the segment, then the project's or profile's own status line
   ccs import                     copy ~/.claude skills, agents, CLAUDE.md into the library (kit 'imported')
   ccs import aws [<p>…] [--all] [--region <r>]
                                  list AWS CLI profiles, or import them as Bedrock profiles
@@ -1123,11 +1131,12 @@ A launch is a profile plus kits. Nothing starts until you choose a profile.
   ccs upgrade [--check | <ver>]  install the latest release (or <ver>) over this ccs; needs gh
   ccs version                    print the version
 
-  ccs library list [skills|agents] | add <path> [--in <folder>] | mkdir skills/<folder>
+  ccs library list [skills|agents|plugins] | add <path|owner/repo|git URL> [--in <folder>] | mkdir skills/<folder>
               mv <entry> <folder|/> | rename skills/<folder>/ <name> | rm <entry> | show <entry> | edit <entry>
+              update [plugins/<name>]    git pull the plugins added from git
   ccs kit     list | new <k> | rm <k> | show <k> | edit <k> | rename <k> <new> | use <k> <entry>… | drop <k> <entry>…
               attach <k> <profile> | detach <k> <profile>
-                                 an entry is skills/<name>, agents/<name>, or a folder: skills/net/
+                                 an entry is skills/<name>, agents/<name>, plugins/<name>, or a folder: skills/net/
                                  edit opens $VISUAL, else $EDITOR, else vi; rm moves to $CCS_HOME/.trash
 
 Resolution order: argument, .claude-profile (walking up), $CCS_PROFILE, default.

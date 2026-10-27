@@ -55,7 +55,8 @@ impl Releases for GhReleases {
         for a in assets {
             args.extend(["-p", a.as_str()]);
         }
-        self.gh(&args)?;
+        // gh may make the folder before it fails; a failed download leaves nothing.
+        self.gh(&args).inspect_err(|_| self.discard(&dir))?;
         Ok(dir)
     }
 
@@ -104,9 +105,10 @@ impl Releases for GhReleases {
             let _ = fs::remove_file(&next);
             return Err(Error::Io(format!("{}: {e}", current.display())));
         }
-        if let Some(d) = binary.parent() {
-            let _ = fs::remove_dir_all(d);
-        }
         Ok(current)
+    }
+
+    fn discard(&self, dir: &Path) {
+        let _ = fs::remove_dir_all(dir);
     }
 }

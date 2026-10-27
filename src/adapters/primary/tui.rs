@@ -1468,10 +1468,10 @@ impl State {
             Some(Page::Kit(_)) => "⏎ choose · space removes an entry or switches a profile · ← back · q quit".into(),
             Some(Page::Library { kit: Some(_) }) => "space pick · p picked only · ←→ skills, agents, plugins · / search · v view · e edit · esc back".into(),
             Some(Page::Library { kit: None }) if self.library_kind() == ItemKind::Plugin => {
-                "a add (owner/repo) · u update · + to kit · x delete · v view · / search · ←→ kind · esc back".into()
+                "←→ skills, agents, plugins · esc back · a add (owner/repo) · u update · + to kit · x delete · v view · / search".into()
             }
             Some(Page::Library { kit: None }) => {
-                "space mark · m move · + to kit · a add · n folder · r rename · x delete · e edit · v view · / · ←→ kind · esc back".into()
+                "←→ skills, agents, plugins · esc back · a add · space mark · m move · + to kit · n folder · r rename · x delete · e edit · v view · / search".into()
             }
         }
     }
@@ -1818,10 +1818,15 @@ fn draw_body(frame: &mut Frame, state: &State, area: Rect) {
             let Some(kind) = tab.kind() else { return };
             let tree = state.visible_tree();
             if tree.is_empty() {
-                let empty = if state.body_filter.is_empty() {
-                    format!("No {}s in the library. Add one: ◆ library, then a.", kind.label())
-                } else {
+                // Say the step from where the reader stands: only the library to manage has `a`.
+                let empty = if !state.body_filter.is_empty() {
                     format!("No {} matches '{}'.", kind.label(), state.body_filter)
+                } else if matches!(row, Row::Kit(_)) {
+                    format!("No {}s in the library yet. Add one from ◆ Library on the start screen.", kind.label())
+                } else if kind == ItemKind::Plugin {
+                    "No plugins yet: press a, then type owner/repo, for example google/elephant-goldfish-model.".to_string()
+                } else {
+                    format!("No {}s yet: press a, then type the path of a folder that holds them.", kind.label())
                 };
                 frame.render_widget(Paragraph::new(empty).block(block), area);
                 return;

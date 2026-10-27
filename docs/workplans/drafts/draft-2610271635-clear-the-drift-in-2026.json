@@ -1,0 +1,15 @@
+{
+  "adr": "ADR-2026-04-11-0227",
+  "created_at": "2026-10-27T16:35:20.300064-04:00",
+  "id": "draft-2610271635-clear-the-drift-in-2026",
+  "kind": "workplan-draft",
+  "next_steps": [
+    "Run /hexa-feature-dev to expand this draft into a full workplan",
+    "Or run `hexa plan drafts approve draft-2610271635-clear-the-drift-in-2026.json`",
+    "Or run `hexa plan drafts clear --name draft-2610271635-clear-the-drift-in-2026`"
+  ],
+  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "origin": "auto-invoke",
+  "prompt": "Clear the drift in 2026-10-27_DRIFT_REPORT.md. Code bugs: (1) reserve 'sync' so 'ccs sync' says it is not built instead of running 'claude sync'; (2) ccs upgrade removes its download folder on every failure (checksum mismatch, missing SHA256SUMS line, failed probe), with tests for each failure path. Doc drift: mark ADR-2610261255 superseded in part by ADR-2610261643; ADR-2610261933 status: §2 still live; ADR-2610261212 status Proposed -> Accepted or record the Keychain result; ADR-2610261643: §7 sync marked not built, §6/§8/§5/§4/§12/§14/§17 updated or marked replaced, Supersedes header adds 2610261720, test counts; ADR-2610271000: Cargo.lock/--locked and the ccs-release procedure, the version probe; architecture.md and README.md corrections listed in the report. Gate: cargo test && hexa analyze . --grade A+ --exit-code, plus a re-run of the drift check that reports only superseded history.",
+  "status": "pending-planner"
+}

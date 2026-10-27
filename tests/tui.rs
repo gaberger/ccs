@@ -85,6 +85,11 @@ impl Fake {
         *self.current.borrow_mut() = Some(p.into());
         self
     }
+    /// A new host: nothing under plugins/ yet.
+    fn no_plugins(self) -> Self {
+        self.items.borrow_mut().retain(|i| i.kind != Kind::Plugin);
+        self
+    }
     fn no_kits(self) -> Self {
         self.kits.borrow_mut().clear();
         self.attached.borrow_mut().clear();
@@ -865,6 +870,33 @@ fn plugins_update_with_u_and_a_asks_for_a_git_source() {
     assert!(screen(&s).contains("plugins/egm: up to date"), "{}", screen(&s));
     press(&mut s, &b, &[Esc, Char('a')]);
     assert!(screen(&s).contains("owner/repo"), "{}", screen(&s));
+}
+
+#[test]
+fn an_empty_plugins_tab_says_to_press_a_here() {
+    let b = Fake::new().no_plugins();
+    let mut s = library_skills(&b);
+    press(&mut s, &b, &[Right, Right]);
+    let out = screen(&s);
+    let empty = line_with(&out, "No plugins");
+    assert!(empty.contains("press a") && empty.contains("owner/repo"), "the step, on this page:\n{out}");
+    assert!(!empty.contains("◆"), "not a trip to the page you are on:\n{out}");
+}
+
+#[test]
+fn an_empty_plugins_tab_in_a_kit_picker_says_where_to_add_one() {
+    let b = Fake::new().no_plugins();
+    let mut s = net_library(&b);
+    press(&mut s, &b, &[Right, Right]);
+    let out = screen(&s);
+    assert!(line_with(&out, "No plugins").contains("◆ Library"), "{out}");
+}
+
+#[test]
+fn the_library_footer_names_the_three_kinds() {
+    let b = Fake::new();
+    let out = screen(&library_skills(&b));
+    assert!(out.lines().last().unwrap_or("").contains("←→ skills, agents, plugins"), "{out}");
 }
 
 #[test]

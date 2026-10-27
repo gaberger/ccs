@@ -126,6 +126,10 @@ esac"#,
         (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr))
     }
     /// What `ccs version` prints now.
+    /// Nothing left in the temp folder: no download folder, kept or half-made.
+    fn tmp_is_empty(&self) -> bool {
+        fs::read_dir(self.root.join("tmp")).unwrap().next().is_none()
+    }
     fn version(&self) -> String {
         String::from_utf8(self.run(&["version"]).stdout).unwrap().trim().to_string()
     }
@@ -213,6 +217,7 @@ fn a_bad_checksum_installs_nothing() {
     let (ok, out) = e.says(&["upgrade"]);
     assert!(!ok && out.contains("checksum"), "{out}");
     assert_eq!(e.version(), format!("ccs {VERSION}"));
+    assert!(e.tmp_is_empty(), "a failed upgrade removes its download folder");
 }
 
 #[test]
@@ -224,6 +229,7 @@ fn a_release_without_this_platform_says_so() {
     let (ok, out) = e.says(&["upgrade"]);
     assert!(!ok && out.contains(&asset("9.9.9")), "{out}");
     assert_eq!(e.version(), format!("ccs {VERSION}"));
+    assert!(e.tmp_is_empty(), "a failed upgrade removes its download folder");
 }
 
 #[test]
@@ -234,6 +240,18 @@ fn a_new_binary_that_cannot_run_is_not_installed() {
     let (ok, out) = e.says(&["upgrade"]);
     assert!(!ok && out.contains("9.9.9"), "{out}");
     assert_eq!(e.version(), format!("ccs {VERSION}"));
+    assert!(e.tmp_is_empty(), "a failed upgrade removes its download folder");
+}
+
+#[test]
+fn a_new_binary_that_names_another_version_is_not_installed() {
+    let e = Env::new();
+    e.publish("9.9.9", "echo 'ccs 9.9.8'", true);
+    e.latest("9.9.9");
+    let (ok, out) = e.says(&["upgrade"]);
+    assert!(!ok && out.contains("9.9.8"), "{out}");
+    assert_eq!(e.version(), format!("ccs {VERSION}"));
+    assert!(e.tmp_is_empty(), "a failed upgrade removes its download folder");
 }
 
 #[test]

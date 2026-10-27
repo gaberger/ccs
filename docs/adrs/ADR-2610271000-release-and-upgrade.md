@@ -88,6 +88,23 @@ private, so its releases need a GitHub login to download.
   `version`, so it passes them to `claude` (`claude upgrade` updates Claude
   Code). Install once from source or from a release to get `ccs upgrade`.
 
+## Correction (2026-10-27, drift report)
+
+- The Evidence above counts "the download folder left behind" as caught. Only
+  the success path was tested: a bad checksum, a missing `SHA256SUMS.txt` line,
+  a binary that did not run, or one that printed another version each returned
+  early and left the folder in the temp folder. Now `Releases::discard` runs
+  after every attempt, and a failed `gh release download` removes what it
+  made. Each failure test checks that the temp folder is empty, and a new test
+  covers a binary that prints another version. Injected bugs, each caught: the
+  use case not discarding; the download not cleaning up after `gh` fails.
+- The probe is stricter than §2 says: the new binary's `version` output must
+  hold the version being installed, not only run.
+- A release changes `Cargo.lock` with `Cargo.toml`, because CI and the release
+  build with `--locked`. It starts from a clean `main` equal to `origin/main`,
+  and the tag waits for CI on that commit. `.claude/skills/ccs-release/`
+  carries the procedure, and its `scripts/prepare.sh` refuses the other states.
+
 ## References
 
 - ADR-2610261212 — one config directory per profile (the first ADR)

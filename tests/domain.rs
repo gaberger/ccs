@@ -385,3 +385,33 @@ mod statusline_chain {
         assert_eq!(parse_command(&["statusline".into(), "--auto".into()], |_| false).unwrap(), Command::StatuslineAuto);
     }
 }
+
+/// `ccs --help` names every library verb and the plugin sources the parser
+/// accepts (drift report 2026-10-27: it still said `[skills|agents] | add <path>`).
+#[test]
+fn help_names_plugins_and_every_library_verb() {
+    for want in [
+        "list [skills|agents|plugins]",
+        "add <path|owner/repo|git URL>",
+        "update [plugins/<name>]",
+        "plugins/<name>",
+        "statusline --auto",
+    ] {
+        assert!(ccs::domain::HELP.contains(want), "help lacks {want:?}:\n{}", ccs::domain::HELP);
+    }
+    assert!(!ccs::domain::HELP.contains("when no profile is chosen"), "a bare ccs opens Home on any terminal");
+}
+
+/// `ccs sync` is decided (ADR-2610261643 §7) but not built. It must say so,
+/// not pass `sync` to claude (drift report 2026-10-27).
+#[test]
+fn sync_is_reserved_and_says_it_is_not_built() {
+    let none = |_: &str| false;
+    for a in [&["sync"][..], &["sync", "init", "git@x:y.git"][..]] {
+        match parse_command(&args(a), none) {
+            Err(CcsError::Usage(m)) => assert!(m.contains("not built"), "{m}"),
+            other => panic!("{a:?} gave {other:?}"),
+        }
+    }
+    assert!(ProfileName::parse("sync").is_err(), "a profile cannot take the command's name");
+}
