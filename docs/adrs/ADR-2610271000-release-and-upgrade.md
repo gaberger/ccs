@@ -64,6 +64,30 @@ private, so its releases need a GitHub login to download.
 - Real run: tag `v0.1.0`, watch the release build, then `ccs upgrade 0.1.0` on
   a copy of the binary.
 
+## Evidence (2026-10-27)
+
+- CI: green on `ubuntu-latest` and `macos-14`, with the grade, from its first
+  run. Action versions moved to checkout@v7, cache@v6, upload-artifact@v7,
+  download-artifact@v8 after the first run warned that Node 20 is deprecated.
+- Tests: `tests/upgrade.rs`, 14. Injected bugs, each caught: the checksum
+  ignored; the new binary not run first; `--check` installing; versions
+  compared as text; a checksum line matched by suffix; an older "latest"
+  installed (missed at first: no test had one; added); the download folder
+  left behind (missed at first: it is in the system temp folder; the tests now
+  point `TMPDIR` into their own folder). Not caught, and left so: copying
+  straight over the running binary instead of renaming a copy over it. The two
+  differ only when a copy fails half-way, which no test here can cause.
+- Release: tag `v0.1.0` ran the gate, built the three targets, and published
+  `ccs-0.1.0-{aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-gnu}.tar.gz`
+  and `SHA256SUMS.txt`.
+- Real run, on a copy of the installed binary: `upgrade --check` and
+  `upgrade` said 0.1.0 is up to date; `upgrade 0.1.0` installed the CI build
+  (arm64, a different hash from the local build) and left no file beside it;
+  the README's `gh release download … | tar xz` printed `ccs 0.1.0`.
+- Found on the way: a ccs built before this change does not know `upgrade` or
+  `version`, so it passes them to `claude` (`claude upgrade` updates Claude
+  Code). Install once from source or from a release to get `ccs upgrade`.
+
 ## References
 
 - ADR-2610261212 — one config directory per profile (the first ADR)
