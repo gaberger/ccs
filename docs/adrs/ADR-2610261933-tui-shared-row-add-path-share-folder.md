@@ -1,7 +1,7 @@
 # ADR-2610261933: The TUI browses shared/, adds from a path, and shares an agent folder
 
-**Status:** Superseded
-**Superseded-By:** ADR-2610261643
+**Status:** Accepted
+**Partly-Superseded-By:** ADR-2610261643 (§1 and §3). §2, `a` adds from a path and the `PathInput` port, is still in force. See "Later changes (2026-10-27)".
 **Date:** 2026-10-26
 **Drivers:** The three follow-ups left by ADR-2610261720 and ADR-2610261902 (workplan draft `draft-2610261329-tui-follow-ups-after-adr`). The user asked to finish them.
 
@@ -135,3 +135,32 @@ test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
   ⬡ Architecture grade: A+ — score 100/100
 ```
+
+## Later changes (2026-10-27)
+
+This ADR is history. What replaced which part of it:
+
+- **The Status line.** Until 2026-10-27 it read `Superseded`, with
+  `Superseded-By: ADR-2610261643`. That covered §1 and §3 only: §2 is still in
+  the code, which cites this ADR (`PathInput` in `src/ports/mod.rs`,
+  `src/adapters/secondary/fs_paths.rs`, the `FsPathInput` wiring in
+  `src/lib.rs`).
+- **§1, the `◆ shared` row and `Target`** — replaced by ADR-2610261643: phase 4
+  deleted `shared/`, and kits replace it. The `Browser` port names no place.
+- **§3, sharing an agent folder** — replaced by ADR-2610261643 phase 4, which
+  deleted `share`. `AssetStore`, and with it `AssetStore::trash(root, rel)`, no
+  longer exist; the only `trash` is `Library::trash(kind, path)`.
+- **§2, how the add is done.** The key, the input line, Tab completion and
+  `PathInput` are as decided. What changed with ADR-2610261643 (§8, §18): `a`
+  is a key of the library, not of a profile's item tab, and adds into the
+  highlighted library folder. The prompt is `Add to the library into <folder>:`
+  (a plugin source on the plugins tab, ADR-2610261643 §15). The add is
+  `Browser::add(path, folder)`, which calls `usecases::library_add_source`;
+  `usecases::add_asset` no longer exists.
+- **Tests.** Of the tests named above, only
+  `path_input_expands_home_and_relative_paths` and
+  `path_input_completes_as_typed_with_folders_ending_in_a_slash`
+  (`tests/assets.rs`) still exist. The rest went with §1, §3 and the old
+  screen. `tab_completes_one_match_and_lists_several` is replaced by
+  `a_adds_from_a_path_into_the_highlighted_folder_with_completion` and
+  `a_failed_add_shows_why` (`tests/tui.rs`).

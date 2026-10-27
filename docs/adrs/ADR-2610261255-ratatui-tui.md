@@ -1,6 +1,7 @@
 # ADR-2610261255: A ratatui TUI as the first primary adapter
 
 **Status:** Accepted
+**Partly-Superseded-By:** ADR-2610261643 (§10, §18: entry point, screen and keys; phase 4: `native`). Still in force: the `Browser` port, Decisions 3, 5 and 6, and the boundary test. See "Later changes (2026-10-27)".
 **Date:** 2026-10-26
 **Drivers:** The user asked for the switcher to use ratatui (https://ratatui.rs/). With profiles, skills, agents and CLAUDE.md all managed by `ccs`, the command line asks the user to remember names; a screen can show them.
 
@@ -58,6 +59,9 @@ hexa rule 4: a primary adapter imports `ports/` only. So the TUI cannot call
   rather than deferred: the command line (`ccs skill add …`) covers it today.
   The picker over another profile's items shipped in ADR-2610261720 (`c` copies);
   adding from a path is still command line only.
+  **Corrected (2026-10-27):** no longer true. ADR-2610261933 §2 added `a`,
+  which reads a path with completion (`Browser::complete_path`) and adds it
+  (`Browser::add`).
 
 ## Implementation
 
@@ -106,6 +110,13 @@ Injected bugs, each caught by the named test and reverted:
 | Enter on an item launches instead of viewing | `search_filters_the_focused_list` |
 | TUI imports `crate::usecases` | `primary_adapters_import_ports_only` |
 
+**Note (2026-10-27):** the first two tests went with the screen they drove
+(ADR-2610261643 §18). The nearest tests today are
+`x_deletes_after_asking_and_names_the_kits_that_used_it` and
+`enter_on_an_item_views_it_and_on_a_folder_opens_the_library`
+(`tests/tui.rs`). `primary_adapters_import_ports_only` is still in
+`tests/boundaries.rs`.
+
 ## References
 
 - ratatui: https://ratatui.rs/
@@ -127,3 +138,29 @@ test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
   ⬡ Architecture grade: A+ — score 100/100
 ```
+
+**Note (2026-10-27):** the gate in Implementation is `--grade A+`, but the run
+above passed `--grade A`. The grade it printed was A+ (100/100), so the A+
+gate held at the time; the command is left as it was run.
+
+## Later changes (2026-10-27)
+
+This ADR is history. What replaced which part of it:
+
+- **Decision 1 and the Screen** — replaced by ADR-2610261643 §10 and §18. A
+  bare `ccs` on a terminal now opens Home (`src/lib.rs`); `ccs ui` still
+  opens it too. The two-pane screen with the Overview │ Skills │ Agents │
+  CLAUDE.md tabs and its footer became Home and its pages.
+- **Decision 2** — the `Browser` port still exists and is still the only thing
+  the TUI sees, but its methods now work on library entries and kits
+  (ADR-2610261643).
+- **Decision 4** — "refuses `native`" no longer applies: ADR-2610261643
+  phase 4 removed the `native` profile. Deleting still asks first.
+- **Decision 3** — `Exit` has more variants than `Launch(name)`: `Quit`,
+  `LaunchWith { profile, kits }` (launch with the ticked kits, this launch
+  only) and `Shell(String)` (a shell in the profile's folder,
+  ADR-2610261643 §14). The rule holds for all of them: the composition root
+  restores the terminal before it launches anything.
+- **Still in force as written:** the `Browser` driving port, Decisions 3, 5
+  and 6, the `tui-depends-on-ratatui-only` import policy and
+  `tests/boundaries.rs`.

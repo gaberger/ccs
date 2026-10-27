@@ -8,7 +8,9 @@ not be an environment ("we start with nothing until we choose a profile");
 profiles must sync across hosts; and "we need to separate login profiles from
 assets like skills, agents, CLAUDE.md".
 **Supersedes:** the `native` profile of ADR-2610261212, and `shared/` of
-ADR-2610261244, ADR-2610261902 and ADR-2610261933 (all replaced by kits).
+ADR-2610261244, ADR-2610261902 and ADR-2610261933 (all replaced by kits);
+and ADR-2610261720, copying items between profiles, deleted in phase 4
+(added to this line 2026-10-27; ADR-2610261720 already named this ADR).
 
 ## Context
 
@@ -86,6 +88,10 @@ So:
   any kit has one).
 - The status line segment names the kits.
 
+**Later (2026-10-27):** every launch also passes `--settings`, with
+`ccs statusline --auto` as the status line, before the kit arguments
+(ADR-2610261237 §2). Code: `prepare_launch` in `src/usecases/mod.rs`.
+
 ### 5. Start with nothing
 
 - There is no `native` profile. ccs reads `~/.claude` only in `ccs import`,
@@ -99,11 +105,20 @@ So:
   added to that profile's `kits`; the `native` registration becomes the import
   above. Originals go to `.trash/`. `~/.claude` is not changed.
 
+**Note (2026-10-27):** the folder and kit `<profile>` are the kit name made
+from the profile name (§8, "Kit names from profile names";
+`kit_name_for_profile`), not the profile name as typed. They differ for a
+profile name with capitals, `_` or `.`.
+
 ### 6. Edit
 
 - `e` in the TUI and `ccs skill|agent edit <name>` open the item's main file in
   `$VISUAL`, else `$EDITOR`, else `vi` (shipped in phase 1). After phase 2 the
   file is the library copy, so the edit reaches every kit that uses the item.
+
+**Replaced (2026-10-27):** `ccs skill|agent edit <name>` was retired with the
+rest of `ccs skill|agent …` in phase 4 (§8, "Old commands"). The command line
+edit is `ccs library edit <entry>`.
 
 ### 7. Sync across hosts with git
 
@@ -145,6 +160,9 @@ library. Before that date, `sync` was not reserved and went to `claude sync`.
   name that still fails gets `p-` in front.
 - **Old commands:** `ccs skill|agent|claude-md …` and `ccs link` fail with a
   line naming the new command. `ccs kit edit <kit>` edits a kit's CLAUDE.md.
+
+  **Note (2026-10-27):** `ccs link` names no new command, because none
+  replaces it: "kits are built at launch, so there is nothing to link".
 - **`ccs new <p> --from <q>`** copies `profile.env`, `kits` and
   `config/settings.json`, never login state.
 - **An old layout** (a `shared/` dir, a `native` registration, or ccs links in
@@ -234,6 +252,12 @@ not kept in view on Tab; no scroll when the row changes.
 
 ### 12. The TUI does what the CLI does (decided 2026-10-27)
 
+**Replaced by §18/§19 (2026-10-27):** the keys `c` (copy), `e` (edit
+`profile.env`) and `d` (default) on a profile are gone. They are rows on the
+profile's page: its variables (Enter edits `profile.env`), "Make it the
+default", "Copy to a new profile". On Home, `e` now opens the page. The
+`── profiles ──` heading went in §13. What each CLI command maps to still holds.
+
 The user: "in the ui there is no way to create a new profile. everything we
 can do at cli should be available in tui". Each CLI command now has a TUI way,
 through the `Browser` port, onto the use case the CLI calls:
@@ -293,6 +317,11 @@ because both panes put their first rows on one line; it now compares lines,
 and fails without the change.
 
 ### 14. A shell in the profile's folder (decided 2026-10-27)
+
+**Replaced by §18/§19 (2026-10-27):** the `t` key and the Overview hint
+`Folder: <dir>  t opens a shell here` are gone. The profile's page has a row,
+"Open a shell in its folder", which does the same (`Exit::Shell`). The shell
+itself is unchanged.
 
 The user: "in the overview add a start in terminal option put me in the
 profile directory". The Overview shows `Folder: <dir>  t opens a shell here`.
@@ -390,6 +419,12 @@ counted as the whole kit (missed at first, with one-entry kits only; test
 added); Tab ignoring the tick; the Kits tab not opening.
 
 ### 17. The TUI always names the profile (decided 2026-10-27)
+
+**Replaced by §18/§19 (2026-10-27):** the frame titles `ccs · ⬡ <profile>`,
+`profile <name>` and `kit <name>` became §18's breadcrumb
+(`ccs › <profile> › kit <name> › library`, with the current profile on its
+right), and the footer `⏎ launch …` became §19's `3 · ⏎ start <profile> +kits`.
+The goal, the profile always named on screen, still holds.
 
 The user: "it isn't clear what profile we are working on" (asked where: the
 TUI). Since §13 the profiles list hides in the Kits and Library sections, and
@@ -533,6 +568,9 @@ run: the new build in an empty `$HOME`, library, → →, showed the new line.
 - Settings (permissions, hooks, status line) stay with the profile in this
   ADR. A kit-level `settings.json` (merged through `--settings`) is not decided
   here.
+  **Clarified (2026-10-27):** this is about settings that come from a kit, which
+  are still not decided. A launch does pass `--settings` now, for ccs's own
+  status line only (§4 note, ADR-2610261237 §2).
 - `shared/`, `unshared`, `share`, `copy` between profiles, and every `native`
   refusal are deleted in phase 4.
 
@@ -541,9 +579,21 @@ run: the new build in an empty `$HOME`, library, → →, showed the new line.
 1. Edit on the current model: `Editor` port, `process_editor.rs`, TUI `e`,
    `ccs … edit`. **Done** (tests: `edit_*` in `tests/cli.rs`, `tests/tui.rs`,
    `tests/assets.rs`; a pseudo-terminal run edited a skill and quit with 0).
+   **Note (2026-10-27):** only `tests/cli.rs` still has `edit_*` tests
+   (`edit_opens_the_item_in_visual_with_its_arguments_and_saves_in_place`,
+   `edit_falls_back_to_editor_and_edits_an_agent`). The TUI and port tests
+   were rewritten with the screen (§18); edits are covered there by
+   `e_and_v_act_on_items_not_folders`,
+   `the_kit_page_edits_claude_md_switches_profiles_renames_and_deletes`
+   (`tests/tui.rs`) and
+   `the_app_makes_copies_edits_and_imports_profiles_through_the_port`
+   (`tests/assets.rs`).
 2. Library and kits: `Library` and `KitStore` ports; `ccs library …`,
    `ccs kit new|list|show|use|drop|rm`; build; `ccs <profile> +kit` launch.
-   **Done** (tests: `tests/kits.rs`, 17). Injected bugs, each caught: agents
+   **Done** (tests: `tests/kits.rs`, 17; with §9's 3, 20. **Note (2026-10-27):**
+   the file has 21; the extra one is
+   `a_launch_sets_the_ccs_status_line_above_any_projects`, from ADR-2610261237
+   §2). Injected bugs, each caught: agents
    linked instead of copied; a folder matching `network/` for `net/`; a stale
    build kept (caught only after the test was fixed to build the kit first);
    a duplicate name allowed. Real run (2026-10-26): a throwaway `$CCS_HOME`, a

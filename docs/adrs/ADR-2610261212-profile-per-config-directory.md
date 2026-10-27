@@ -1,6 +1,7 @@
 # ADR-2610261212: One config directory per profile, selected at launch
 
-**Status:** Proposed
+**Status:** Accepted
+**Partly-Superseded-By:** ADR-2610261643 (the `native` profile, `shared/` and its links, `ccs link`, Rule 4, `ccs import` as "add ~/.claude as native"). See "Later changes (2026-10-27)".
 **Date:** 2026-10-26
 **Drivers:** Switching Claude Code between a personal claude.ai account and AWS Bedrock profiles is done by copying `settings.json` over itself by hand; each mode needs its own MCP servers, skills and plugins.
 
@@ -199,3 +200,38 @@ test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
   ⬡ Architecture grade: A+ — score 100/100
 ```
+
+## Later changes (2026-10-27)
+
+This ADR is history. What changed since it was written:
+
+- **Status: Proposed → Accepted (2026-10-27).** The decision shipped: `ccs`
+  is a launcher that sets `CLAUDE_CONFIG_DIR` per profile, and the accepted
+  ADR-2610261237, ADR-2610261238 and ADR-2610261643 are built on it.
+  The Keychain check that "Open risk" waits for was **never recorded**: no
+  later ADR, test or document holds its result. The risk is still open. It
+  matters only for two claude.ai logins on one Mac; Bedrock profiles are not
+  affected. The status is changed because the code and later decisions
+  depend on this one, not because the risk was closed.
+- **Replaced by ADR-2610261643:** the `native` profile and its marker,
+  `shared/` and its links, `ccs link` (now a retired command), `ccs import`
+  as "add `~/.claude` as native" (it now copies into the library), Rule 4
+  ("linking never destroys"), the relink in `ccs new --from`, and the layout
+  and Commands table above where they name these. The evidence tests
+  `linking_never_replaces_a_real_file` and
+  `cloning_copies_env_settings_and_own_skills_but_relinks_shared` went with
+  them; cloning is now covered by
+  `cloning_copies_variables_kits_and_settings_never_login_or_items`
+  (`tests/profiles.rs`). `a_bedrock_shell_does_not_leak_into_a_personal_profile`
+  is still in `tests/cli.rs`.
+- **Rule 2's list grew.** Besides the variables named in Context and
+  `CLAUDE_CONFIG_DIR`, ccs now also unsets `CLAUDE_CODE_USE_VERTEX`,
+  `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_BASE_URL`,
+  `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL` and
+  `ANTHROPIC_DEFAULT_HAIKU_MODEL` (`PROVIDER_VARS` in `src/domain/mod.rs`).
+  The rule is unchanged: provider selection is cleared, secrets are not.
+- **The launch adds arguments.** It is no longer only "unset, set, then exec
+  `claude`". Every launch also passes `--settings` with ccs's status line
+  (ADR-2610261237 §2), then `--plugin-dir` once per kit and plugin and
+  `--append-system-prompt-file` for the kits' CLAUDE.md
+  (ADR-2610261643 §4). Code: `prepare_launch` in `src/usecases/mod.rs`.
