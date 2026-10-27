@@ -1,24 +1,167 @@
 //! Ports — the contracts between layers.
 //!
 //! Rule 2: `ports/` imports `domain/` only, for value types. A port names
-//! *what* is needed, never *how* it is done — so a port that mentions a
-//! database, a URL, or a file path has already leaked.
+//! *what* is needed, never *how*: `ProfileStore` says nothing about symlinks
+//! or directories, which is why a test can swap it for a temp dir.
 
-use crate::domain::Count;
+use crate::domain::{
+    CcsError, Kind, KitName, LaunchPlan, LegacyItem, LegacyLayout, LibItem, LibraryRemoved, ListEntry, Overview, Profile,
+    ProfileName, Use,
+};
 
-/// Re-exported so an adapter needs to import nothing but this module.
-///
-/// Rule 4 is that a secondary adapter imports `ports/` **only** — not
-/// `domain/`. Without this line an adapter cannot name the type its own port
-/// signature uses, and every implementation reaches past the contract into the
-/// domain. The port is the adapter's whole world, so the port hands it over.
-pub use crate::domain::Count as CountValue;
+/// Re-exported so an adapter needs to import nothing but this module (rule 4).
+pub use crate::domain::{
+    front_matter_description, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
+    Kind as ItemKind, KitName as Kit, LaunchPlan as Plan, LegacyItem as OldItem, LegacyLayout as OldLayout,
+    LegacyProfile as OldProfile, LibItem as LibraryItem, LibraryRemoved as Removed, ListEntry as ProfileRow,
+    Overview as ProfileOverview, Pick, Profile as LoadedProfile, ProfileName as Name, TreeRow, Use as Entry,
+};
 
-/// Somewhere a count can be kept.
-///
-/// Note what is absent: no table, no path, no connection string. An in-memory
-/// map and a Postgres row satisfy this identically, which is the point.
-pub trait CounterStore {
-    fn load(&self) -> Count;
-    fn save(&mut self, count: Count);
+/// Where profiles are kept. A profile is a login: its variables, its default
+/// kits, and a config dir that holds login state only (ADR-2610261643).
+pub trait ProfileStore {
+    /// Every profile, sorted.
+    fn names(&self) -> Vec<ProfileName>;
+    fn exists(&self, name: &ProfileName) -> bool;
+    fn load(&self, name: &ProfileName) -> Result<Profile, CcsError>;
+    /// Make an empty profile, or one with `from`'s variables, kits and settings — never its login.
+    fn create(&self, name: &ProfileName, from: Option<&ProfileName>) -> Result<(), CcsError>;
+    fn default_name(&self) -> Option<String>;
+    fn set_default(&self, name: &ProfileName) -> Result<(), CcsError>;
+    fn clear_default(&self) -> Result<(), CcsError>;
+    /// Replace the profile's variables file.
+    fn write_env(&self, name: &ProfileName, text: &str) -> Result<(), CcsError>;
+    /// Write the profile's `settings.json` unless one exists. Returns whether it wrote.
+    fn write_settings_if_absent(&self, name: &ProfileName, text: &str) -> Result<bool, CcsError>;
+    /// The kits a profile launches with by default, in order.
+    fn kits(&self, name: &ProfileName) -> Vec<String>;
+    fn set_kits(&self, name: &ProfileName, kits: &[String]) -> Result<(), CcsError>;
+}
+
+/// Every skill and agent, kept in folders (ADR-2610261643).
+pub trait Library {
+    /// Sorted by folder, then name.
+    fn items(&self, kind: Kind) -> Vec<LibItem>;
+    /// Every folder path, empty ones included. Sorted.
+    fn folders(&self, kind: Kind) -> Vec<String>;
+    /// What `source` would be added as: a skill (its folder; `SKILL.md` names its folder
+    /// too) or an agent (`.md` file). An error says what it is not.
+    fn classify(&self, source: &std::path::Path) -> Result<(Kind, std::path::PathBuf), CcsError>;
+    /// Copy a skill folder or agent file in as `folder/name`, making the folder.
+    fn add(&self, kind: Kind, folder: &str, name: &str, source: &std::path::Path) -> Result<(), CcsError>;
+    fn make_folder(&self, kind: Kind, folder: &str) -> Result<(), CcsError>;
+    /// The item's main file: a skill's `SKILL.md`, an agent's `.md`.
+    fn main_file(&self, item: &LibItem) -> std::path::PathBuf;
+    fn read(&self, item: &LibItem) -> Result<String, CcsError>;
+    /// Move an item (`folder/name`) or a folder into `to` (`""` is the top), making `to`.
+    fn move_to(&self, kind: Kind, from: &str, to: &str) -> Result<(), CcsError>;
+    /// Rename a folder where it is. Refuses a name already taken there.
+    fn rename_folder(&self, kind: Kind, folder: &str, name: &str) -> Result<(), CcsError>;
+    /// Move an item or folder (`folder/name` or a folder path) to the trash, whole.
+    fn trash(&self, kind: Kind, path: &str) -> Result<std::path::PathBuf, CcsError>;
+}
+
+/// Kits: named picks from the library, built into plugins at launch (ADR-2610261643).
+pub trait KitStore {
+    fn names(&self) -> Vec<KitName>;
+    fn exists(&self, kit: &KitName) -> bool;
+    fn create(&self, kit: &KitName) -> Result<(), CcsError>;
+    /// To the trash, whole.
+    fn remove(&self, kit: &KitName) -> Result<std::path::PathBuf, CcsError>;
+    /// Refuses a name already taken.
+    fn rename(&self, kit: &KitName, to: &KitName) -> Result<(), CcsError>;
+    fn uses(&self, kit: &KitName) -> Result<Vec<Use>, CcsError>;
+    fn set_uses(&self, kit: &KitName, uses: &[Use]) -> Result<(), CcsError>;
+    /// The kit's instructions, when it has any.
+    fn instructions(&self, kit: &KitName) -> Option<String>;
+    fn set_instructions(&self, kit: &KitName, text: &str) -> Result<(), CcsError>;
+    /// The file `ccs kit edit` opens; it may not exist yet.
+    fn instructions_file(&self, kit: &KitName) -> std::path::PathBuf;
+    /// Rebuild the kit as a plugin holding exactly `items`. Returns the plugin dir.
+    fn build(&self, kit: &KitName, items: &[LibItem]) -> Result<std::path::PathBuf, CcsError>;
+    /// Write one launch's joined instructions. Returns the file.
+    fn write_prompt(&self, kits: &[KitName], text: &str) -> Result<std::path::PathBuf, CcsError>;
+}
+
+/// What earlier versions left, and the stock `~/.claude` (ADR-2610261643 §5).
+/// Read-only except `retire`, which moves an old path to the trash.
+pub trait Legacy {
+    fn layout(&self) -> LegacyLayout;
+    /// Skills and agents in `~/.claude`, and its `CLAUDE.md`. Never written.
+    fn stock(&self) -> (Vec<LegacyItem>, Option<std::path::PathBuf>);
+    fn read(&self, path: &std::path::Path) -> Result<String, CcsError>;
+    /// Move a path ccs made to the trash, whole; a link is removed. Returns where it went.
+    fn retire(&self, path: &std::path::Path) -> Result<Option<std::path::PathBuf>, CcsError>;
+}
+
+/// Paths the user types into the TUI (ADR-2610261933).
+pub trait PathInput {
+    /// A leading `~` is the home dir; a relative path starts where `ccs` started.
+    fn expand(&self, typed: &str) -> std::path::PathBuf;
+    /// What `typed` can complete to, spelled as typed (a `~` stays). Folders end in `/`.
+    /// Dotfiles only when the last part starts with `.`. Sorted.
+    fn complete(&self, typed: &str) -> Vec<String>;
+}
+
+/// Opens a file in the user's editor and waits for it (ADR-2610261643).
+pub trait Editor {
+    /// Returns once the editor exits; an editor that fails or cannot start is an error.
+    fn edit(&self, path: &std::path::Path) -> Result<(), CcsError>;
+}
+
+/// Runs another program, for wrapping an existing status line command.
+pub trait CommandRunner {
+    /// Run `argv` with `stdin`; return its stdout, or `None` when it could not start.
+    fn run(&self, argv: &[String], stdin: &[u8]) -> Option<String>;
+}
+
+/// The AWS CLI profiles on this machine (ADR-2610261238).
+pub trait AwsProfiles {
+    fn names(&self) -> Result<Vec<String>, CcsError>;
+    fn region(&self, profile: &str) -> Option<String>;
+}
+
+/// Finds a profile pinned to the working directory.
+pub trait PinLocator {
+    fn pinned(&self) -> Option<String>;
+}
+
+/// Starts Claude Code.
+pub trait Launcher {
+    fn available(&self) -> bool;
+    /// Replace this process. Returns only when that failed.
+    fn launch(&self, plan: &LaunchPlan) -> CcsError;
+}
+
+/// Driving port: everything the TUI can ask of the application (ADR-2610261255,
+/// rows and keys in ADR-2610261643 §8). A primary adapter sees only this.
+pub trait Browser {
+    fn profiles(&self) -> Vec<ListEntry>;
+    fn overview(&self, name: &ProfileName) -> Result<Overview, CcsError>;
+    fn set_default(&self, name: &ProfileName) -> Result<(), CcsError>;
+    fn kits(&self) -> Vec<String>;
+    fn attach(&self, kit: &str, profile: &ProfileName, on: bool) -> Result<(), CcsError>;
+    fn new_kit(&self, kit: &str) -> Result<(), CcsError>;
+    fn remove_kit(&self, kit: &str) -> Result<std::path::PathBuf, CcsError>;
+    fn rename_kit(&self, kit: &str, to: &str) -> Result<(), CcsError>;
+    fn kit_uses(&self, kit: &str) -> Result<Vec<Use>, CcsError>;
+    /// Add or remove one line of a kit's `uses`.
+    fn set_use(&self, kit: &str, entry: &Use, on: bool) -> Result<(), CcsError>;
+    fn kit_instructions(&self, kit: &str) -> Option<String>;
+    /// Open a kit's CLAUDE.md in the editor. The caller hands over the terminal first.
+    fn edit_kit(&self, kit: &str) -> Result<(), CcsError>;
+    /// Items and folders of one kind.
+    fn library(&self, kind: Kind) -> (Vec<LibItem>, Vec<String>);
+    fn read(&self, entry: &Use) -> Result<String, CcsError>;
+    /// Open an item's main file in the editor. The caller hands over the terminal first.
+    fn edit(&self, entry: &Use) -> Result<(), CcsError>;
+    /// Copy in the file or folder at a typed path, into `folder`.
+    fn add(&self, path: &str, folder: &str) -> Result<(Kind, String), CcsError>;
+    fn mkdir(&self, kind: Kind, folder: &str) -> Result<(), CcsError>;
+    fn move_entry(&self, entry: &Use, to: &str) -> Result<(), CcsError>;
+    fn rename_folder(&self, kind: Kind, folder: &str, name: &str) -> Result<(), CcsError>;
+    fn remove(&self, entry: &Use) -> Result<LibraryRemoved, CcsError>;
+    /// Set a profile's default kits, in order.
+    fn set_kits(&self, profile: &ProfileName, kits: &[String]) -> Result<(), CcsError>;
+    fn complete_path(&self, typed: &str) -> Vec<String>;
 }

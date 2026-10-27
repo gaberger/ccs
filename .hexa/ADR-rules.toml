@@ -154,3 +154,18 @@ deny = [
 ]
 message = "The domain imported something from outside the project that it is not allowed to know about. Put the capability behind a port, or add it to `allow` in .hexa/ADR-rules.toml deliberately and say why in an ADR."
 severity = "error"
+
+# ── Project rules ────────────────────────────────────────────────────────────
+
+# The TUI's only outside dependency is ratatui (ADR-2610261255, rule 6).
+# An import policy sees external imports only; the stricter internal rule —
+# primary adapters import ports/ only — is enforced by tests/boundaries.rs,
+# because `hexa analyze` 26.9.12 allows primary -> usecases.
+[[import_policy]]
+adr = "ADR-2610261255"
+id = "tui-depends-on-ratatui-only"
+layer = "/adapters/primary/"
+allow = ["ratatui"]
+deny = []
+message = "The TUI imported an outside crate other than ratatui. Its only dependency is ratatui (and crossterm through ratatui::crossterm). Add a dependency deliberately: an ADR, then `allow` here."
+severity = "error"

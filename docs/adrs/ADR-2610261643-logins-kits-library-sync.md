@@ -1,0 +1,285 @@
+# ADR-2610261643: Logins and kits are separate; a library in folders; edit; sync across hosts
+
+**Status:** Accepted
+**Date:** 2026-10-26
+**Drivers:** User feedback, shared by other users: skills are hard to manage in
+one flat list; items cannot be edited from ccs; the stock `~/.claude` should
+not be an environment ("we start with nothing until we choose a profile");
+profiles must sync across hosts; and "we need to separate login profiles from
+assets like skills, agents, CLAUDE.md".
+**Supersedes:** the `native` profile of ADR-2610261212, and `shared/` of
+ADR-2610261244, ADR-2610261902 and ADR-2610261933 (all replaced by kits).
+
+## Context
+
+Measured on 2026-10-26 with Claude Code's `init` event
+(`claude -p … --output-format stream-json --verbose`), in a temp
+`CLAUDE_CONFIG_DIR`:
+
+| Probe | Found? |
+|---|---|
+| `<config>/skills/flat/SKILL.md` | yes |
+| `<config>/skills/grp/nested/SKILL.md` | **no** |
+| `--plugin-dir A --plugin-dir B` (two plugins, one session) | yes, both; nothing written to the config dir's skills |
+| plugin `skills/grp/nested/SKILL.md` | **no** |
+| plugin `skills/x` as a symlink to a folder elsewhere | yes |
+| plugin `agents/grp/a.md` (real folder) | yes, as `kit:grp:a` |
+| plugin `agents/a.md` as a symlink to a file | **no** |
+| plugin `agents/grp` as a symlink to a folder | **no** |
+| plugin `agents/a.md` as a hard link or copy | yes |
+
+A plugin's skills are named `<plugin>:<skill>`. `claude --help` lists
+`--plugin-dir` (repeatable), `--settings` and `--append-system-prompt-file`.
+
+So:
+
+- A login and an asset set can be combined **per session**, with no change to
+  the login's config dir. Two terminals can run one login with two kits.
+- Folders cannot be shown to Claude Code. They live in a library ccs owns, and
+  ccs builds a flat plugin from them.
+- A profile today mixes login state (`.claude.json`, history, `projects/`) with
+  chosen assets. Only the second can sync, and today nothing separates them.
+- `native` points at `~/.claude`, which ccs may not change, so every write verb
+  needs a refusal for it. `shared/` links everything into everything, the
+  opposite of "start with nothing".
+
+## Decision
+
+### 1. A profile is a login, and nothing else
+
+- `$CCS_HOME/<profile>/profile.env`: provider variables (Bedrock, model, …).
+  Synced. No secrets (unchanged rule).
+- `$CCS_HOME/<profile>/kits`: the kits it launches with by default, one per
+  line. Synced. Empty for a new profile.
+- `$CCS_HOME/<profile>/config/`: its `CLAUDE_CONFIG_DIR`. Login state, history,
+  caches, its own `settings.json`. Host-local, never synced, and ccs puts no
+  skills, agents or CLAUDE.md here.
+
+### 2. A library, in folders
+
+- `$CCS_HOME/library/skills/<folders…>/<skill>/SKILL.md` and
+  `$CCS_HOME/library/agents/<folders…>/<agent>.md`. A folder is a directory
+  that is not an item. Folders nest.
+- An item's **name** is its leaf (`find-nqe-query`). It is unique in the library
+  for its kind, because a kit picks items by name and a pick must survive a move
+  between folders. Add, move and import refuse a clash and name both paths.
+
+### 3. A kit is a named set of assets
+
+- `$CCS_HOME/kits/<kit>/uses`: library entries, one per line —
+  `skills/nqe/` (a folder: all skills under it, now and later),
+  `skills/find-nqe-query` (one item), and the same for `agents/`.
+- Optional, in the same dir: `CLAUDE.md` (instructions), `.mcp.json` (MCP
+  servers, in the plugin format).
+- At launch ccs **builds** each kit into `$CCS_HOME/.build/<kit>/`, a plugin:
+  `.claude-plugin/plugin.json` named after the kit; `skills/<name>` linked to
+  the library folder; `agents/<name>.md` copied (links are not read, per the
+  table); `.mcp.json` copied. The build is generated, host-local, and rebuilt
+  on every launch, so it cannot drift from the library for longer than a session.
+
+### 4. A launch is a profile plus kits
+
+- `ccs <profile> [+<kit>…] [claude args…]`. `+kit` words replace the profile's
+  default kits for this launch.
+- ccs runs `claude --plugin-dir .build/<kit>` once per kit, and
+  `--append-system-prompt-file` with the kits' `CLAUDE.md` files joined (when
+  any kit has one).
+- The status line segment names the kits.
+
+### 5. Start with nothing
+
+- There is no `native` profile. ccs reads `~/.claude` only in `ccs import`,
+  which copies its skills and agents into `library/imported/` and its CLAUDE.md
+  into the kit `imported`, and changes nothing in `~/.claude`.
+- ccs sets no default by itself. `ccs` with nothing resolved opens the picker
+  on a terminal, and is an error otherwise. It never falls back to `~/.claude`.
+- `ccs migrate` (idempotent) converts an existing `$CCS_HOME`: `shared/` items
+  go to `library/shared/` and a kit `shared`, added to every profile's `kits`;
+  each profile's own items go to `library/<profile>/` and a kit `<profile>`,
+  added to that profile's `kits`; the `native` registration becomes the import
+  above. Originals go to `.trash/`. `~/.claude` is not changed.
+
+### 6. Edit
+
+- `e` in the TUI and `ccs skill|agent edit <name>` open the item's main file in
+  `$VISUAL`, else `$EDITOR`, else `vi` (shipped in phase 1). After phase 2 the
+  file is the library copy, so the edit reaches every kit that uses the item.
+
+### 7. Sync across hosts with git
+
+- `$CCS_HOME` is a git repo. ccs writes its `.gitignore`: `*/config/`,
+  `.build/`, `.trash/`, `.default`. What syncs: `library/`, `kits/`, and each
+  profile's `profile.env` and `kits`. What stays: login state, history, the
+  default profile.
+- `ccs sync init <remote>`; `ccs sync` commits local changes as
+  `ccs sync from <host>`, pulls with rebase, pushes. On a conflict it stops and
+  names the files; it never resolves one itself.
+- Git, because every developer has it and it gives history and undo; a `Sync`
+  port hides it.
+
+### 8. Phase 3 and 4 details (decided 2026-10-26, before their code)
+
+- **TUI rows:** profiles (each with its `+kits`), a `kits` heading, each kit,
+  then `◆ library`. Tabs depend on the row: a profile has Overview and Kits; a
+  kit has Skills, Agents and CLAUDE.md; the library has Skills and Agents.
+- **Trees:** Skills and Agents show the library as a tree, folders first in
+  path order. On a kit, each row is marked `[x]` (picked), `[·]` (picked
+  through a folder above it) or `[ ]`. Space toggles `[x]`. Space on `[·]` names
+  the folder that picks it and changes nothing.
+- **Keys:** Enter on a profile launches it with its kits; on a profile's Kits
+  tab space attaches or detaches. `e` edits an item, or a kit's CLAUDE.md. `v`
+  views. On the library: `a` adds from a path into the highlighted folder, `m`
+  moves to a typed folder, `n` makes a folder, `x` deletes after y/n. On the
+  kits heading or a kit, `n` makes a kit; on a kit, `x` deletes it after y/n.
+- **Migration clashes:** names are unique in the library, so an item whose name
+  is already taken (a profile's own copy of a shared item, or the same name in
+  two profiles) is **not moved**. It stays in the profile's config dir, where
+  Claude Code still loads it, and `migrate` and `doctor` name it. Nothing is
+  renamed and nothing is merged.
+- **Kit names from profile names:** lowercased, `_` and `.` become `-`, and a
+  name that still fails gets `p-` in front.
+- **Old commands:** `ccs skill|agent|claude-md …` and `ccs link` fail with a
+  line naming the new command. `ccs kit edit <kit>` edits a kit's CLAUDE.md.
+- **`ccs new <p> --from <q>`** copies `profile.env`, `kits` and
+  `config/settings.json`, never login state.
+- **An old layout** (a `shared/` dir, a `native` registration, or ccs links in
+  a config dir) makes `list`, `doctor` and `ui` print `run: ccs migrate`.
+
+### 9. Organizing: folder moves keep kits, renames, and bulk work in the TUI (decided 2026-10-26)
+
+- **A folder move or rename rewrites every kit line under it.** A kit names a
+  folder by its path (`skills/net/`), so moving `net/` into `ops/` changes each
+  `skills/net/…/` line to `skills/ops/net/…/` in the same step. Items are named
+  by name and need nothing. (Before this, a folder move left kits pointing at
+  nothing; found while planning a real reorganization.)
+- `ccs library rename skills/<folder>/ <new-name>` renames a folder in place.
+  `ccs kit rename <old> <new>` renames a kit and every profile's `kits` line.
+- **TUI, library rows:** space marks rows (`●`); `m`, `x` and `+` act on the
+  marked rows, or on the highlighted row when none is marked. `m` opens a folder
+  picker: typing filters it, Enter takes the highlighted folder, and text that
+  names no folder makes it (`+ new folder`). `+` opens a kit picker (not `k`, which is the vim key for up) the same way
+  (`+ new kit`) and adds the rows to that kit. `r` renames a folder. Each row
+  shows the kits that pick it.
+- **TUI, kit rows:** a fourth tab, Profiles, attaches the kit to profiles with
+  space. `p` shows only what the kit picks. `r` on a kit renames it. Tab titles
+  count what they hold.
+
+   **Done** (tests: 3 in `tests/kits.rs`, 8 in `tests/tui.rs`). Injected bugs,
+   each caught: a folder move or rename leaving kits behind; a kit rename
+   forgetting profiles; a folder offered as its own move target; marks kept
+   after a move; labels missing picks made through a folder; the `+ new` line
+   put first again. That last one was the first design, and the tests caught
+   it: typing `nq` then Enter made a folder `nq` instead of taking `net/nqe`.
+   Matches now come first. `+` and not `k` adds to a kit, because `k` is up.
+   Used on the real library (2026-10-26): 41 skills and 96 agents moved out of
+   `imported/` into `network/…`, `forward-dev/`, `horizon/`, `writing/`,
+   `methods/`, `agents/network/`, `agents/dev/…`, `agents/claude-flow/…`; kit
+   `imported` renamed `base` (it holds the global CLAUDE.md); kits `network`
+   (37), `forward-dev` (4), `dev` (19), `writing` (1), `claude-flow` (76).
+
+### 10. Starting ccs chooses a provider and kits (decided 2026-10-26)
+
+- A bare `ccs` (no profile, no `+kit`) on a terminal opens a launch screen: the
+  profiles on the left, each with its provider (`bedrock claude-bedrock@us-east-1`,
+  `anthropic`), and every kit on the right, with its item count and `[x]`.
+- The resolved profile (argument, pin, `$CCS_PROFILE`, default) is
+  preselected, and its kits are ticked; moving to another profile ticks that
+  profile's kits. The common case is one Enter.
+- Space ticks a kit; Enter launches the highlighted profile with the ticked
+  kits, for this launch only (as `+kit` does); `s` saves the ticked kits as the
+  profile's defaults first. Arguments typed after a bare `ccs` go to `claude`.
+- `ccs <profile>` and `ccs <profile> +kit` skip the screen, and so does any run
+  without a terminal: scripts keep the resolution order of ADR-2610261212.
+- `ccs ui` stays the manager; its Enter launches with the profile's own kits.
+
+### 11. Scrolling and a clearer screen (decided 2026-10-26)
+
+- Every list keeps its scroll position between frames, so moving up one row
+  never jumps the view (before: the position was rebuilt each frame).
+- Page Up / Page Down move a page; Home / End (and `g` / `G`) go to the first or
+  last row; the mouse wheel moves three rows in the focused pane. This applies
+  to the manager, the launch screen, and the `v` view.
+- A list or text longer than its box shows a scrollbar, and the focused list
+  shows its place in the bottom border: `31/66`.
+- Folders are bold, descriptions dim, `[x]` green, `[·]` yellow, kit labels
+  magenta. Text is unchanged, so nothing depends on colour.
+- Mouse capture means a plain drag no longer selects terminal text; most
+  terminals select with Shift (or Option on macOS) held.
+
+§10 and §11 **done** (tests: 5 launch-screen and 6 scrolling tests in
+`tests/tui.rs`, one in `tests/domain.rs`). Injected bugs, each caught: the
+scroll position rebuilt each frame; the wheel moving one row; a launch ignoring
+the ticks; ticks not reset on another profile; no scrollbar; page keys not
+moving the view. Found while testing: Page Down first moved only the cursor,
+leaving the view; it now moves the view a page too, as a pager does; and the
+run loop's last restore left mouse capture on, which would have printed every
+later mouse move into the shell. Real run (2026-10-26), a 110×24
+pseudo-terminal on the user's setup: a bare `ccs` showed `bedrock
+claude-bedrock-gary@us-east-1` and six kits; one tick and Enter launched with
+`--plugin-dir .build/base --plugin-dir .build/writing` and
+`CCS_KITS=base,writing`; the saved defaults did not change; the output turned
+mouse capture on (`?1000h`) and off (`?1000l`).
+
+## Consequences
+
+- Skills from a kit are named `<kit>:<skill>` in Claude Code. A skill invoked
+  by hand is `/network:find-nqe-query`. Model-invoked skills are unaffected.
+- Agents are copied at build, so an agent edited mid-session takes effect on
+  the next launch. Skills are linked, so their edits are live.
+- Settings (permissions, hooks, status line) stay with the profile in this
+  ADR. A kit-level `settings.json` (merged through `--settings`) is not decided
+  here.
+- `shared/`, `unshared`, `share`, `copy` between profiles, and every `native`
+  refusal are deleted in phase 4.
+
+## Implementation
+
+1. Edit on the current model: `Editor` port, `process_editor.rs`, TUI `e`,
+   `ccs … edit`. **Done** (tests: `edit_*` in `tests/cli.rs`, `tests/tui.rs`,
+   `tests/assets.rs`; a pseudo-terminal run edited a skill and quit with 0).
+2. Library and kits: `Library` and `KitStore` ports; `ccs library …`,
+   `ccs kit new|list|show|use|drop|rm`; build; `ccs <profile> +kit` launch.
+   **Done** (tests: `tests/kits.rs`, 17). Injected bugs, each caught: agents
+   linked instead of copied; a folder matching `network/` for `net/`; a stale
+   build kept (caught only after the test was fixed to build the kit first);
+   a duplicate name allowed. Real run (2026-10-26): a throwaway `$CCS_HOME`, a
+   Bedrock profile, kits `net` (a skill in `net/nqe/`, an agent in `hex/`) and
+   `eng` (a skill, and a CLAUDE.md rule "end every answer with banana");
+   `ccs work +net +eng -p …` loaded `net:find-nqe-query`,
+   `eng:elephant-goldfish-method`, `net:probe-agent`, and answered `ok banana`.
+3. TUI: rows for profiles and kits, then `◆ library`; a kit shows the library
+   tree with `[x]`; space toggles; `m` moves; `e` edits. **Done** (tests:
+   `tests/tui.rs`, 22, against a fake `Browser`; the real `App` behind the port
+   in `tests/assets.rs`).
+4. Start with nothing: delete `native` and `shared/`; `ccs import` into the
+   library; `ccs migrate`; bare `ccs` opens the picker. **Done** (tests:
+   `tests/migrate.rs`, 14, on a hand-built copy of the old layout).
+
+   Injected bugs, each caught: an inherited `[·]` drawn as `[ ]`; space on `[·]`
+   writing a line; `a` ignoring the highlighted folder; any key confirming a
+   delete; search dropping parent folders; migrated originals left behind; the
+   shared kit not attached; the `native` default kept; `import` retiring
+   `~/.claude` files; leftover clashes counted as an old layout.
+
+   Real run (2026-10-26), first on a copy of the user's `~/.claude-profiles`,
+   then on the real one: 40 skills and 96 agents from `~/.claude` into
+   `library/…/imported/`; 8 agents whose names `~/.claude` holds twice were
+   named "not imported" (found here, not by the tests: two tests were added);
+   an empty `shared/` made an empty kit until fixed (also found here; test
+   added); `~/.claude` and the Bedrock profile's files hashed the same before
+   and after. In a 120×30 pseudo-terminal a bare `ccs` opened the picker,
+   space edited a kit's `uses` on disk, and Enter launched with
+   `--plugin-dir .build/imported` and `CCS_KITS=imported`. Also found: `ccs …
+   | head` panicked on a closed pipe (an older bug); `main.rs` now restores the
+   default SIGPIPE action (test added).
+5. `ccs sync` through a `Sync` port and a git adapter.
+
+Gate for every phase: `cargo test && hexa analyze . --grade A+ --exit-code`,
+plus a run of the real binary in a throwaway `$HOME`. Phase 2 adds a launch
+whose `claude` is a script that prints its arguments, and one real
+`claude -p` probe like the table above.
+
+## References
+
+- ADR-2610261212, ADR-2610261244, ADR-2610261255, ADR-2610261720,
+  ADR-2610261902, ADR-2610261933

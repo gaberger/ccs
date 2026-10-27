@@ -1,0 +1,241 @@
+{
+  "sessions": {
+    "6a3d646e-4989-4530-afa4-82d2819a5889": {
+      "adr": "ADR-2610261643",
+      "files": [
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/skills/elephant-goldfish-method/SKILL.md",
+        "tests/cli.rs",
+        "docs/adrs/ADR-2610261643-library-folders-declarative-profiles-sync.md",
+        "tests/kits.rs",
+        "tests/migrate.rs",
+        "tests/tui.rs",
+        "src/ports/mod.rs",
+        "src/adapters/secondary/fs_store.rs",
+        "src/adapters/secondary/fs_legacy.rs",
+        "tests/assets.rs",
+        "README.md",
+        "src/main.rs",
+        "docs/adrs/ADR-2610261643-logins-kits-library-sync.md",
+        "src/adapters/primary/tui.rs"
+      ],
+      "gate": "cargo test && hexa analyze . --grade A+ --exit-code",
+      "pid": 65232,
+      "pid_start": null,
+      "stage": "gate",
+      "tasks": [
+        {
+          "done_at": "2026-10-26T20:56:08.272453+00:00",
+          "status": "done",
+          "title": "1 edit: Editor port, TUI e, ccs … edit"
+        },
+        {
+          "done_at": "2026-10-26T21:18:06.038769+00:00",
+          "status": "done",
+          "title": "library and kits, build, launch with +kit"
+        },
+        {
+          "done_at": "2026-10-26T21:44:46.805826+00:00",
+          "status": "done",
+          "title": "TUI: profiles, kits, library tree"
+        },
+        {
+          "done_at": "2026-10-26T21:44:46.816949+00:00",
+          "status": "done",
+          "title": "start with nothing: drop native and shared, import, migrate"
+        },
+        {
+          "status": "doing",
+          "title": "ccs sync over git"
+        }
+      ],
+      "updated": "2026-10-27T11:20:08.780328+00:00"
+    },
+    "a5898ad6-c8ae-4fce-9bb6-372f479aa638": {
+      "adr": "ADR-2610261255",
+      "evidence": "cargo test 2>&1 | grep \"test result\" && hexa analyze . --grade A 2>&1 | grep \"Architecture grade\"",
+      "files": [
+        "docs/adrs/ADR-2610261212-profile-per-config-directory.md",
+        "tests/domain.rs",
+        "tests/cli.rs",
+        "src/adapters/secondary/mod.rs",
+        "src/adapters/secondary/fs_pins.rs",
+        "src/adapters/secondary/exec_launcher.rs",
+        "src/lib.rs",
+        "src/main.rs",
+        "start.sh",
+        "docs/adrs/ADR-2610261237-statusline-segment.md",
+        "docs/adrs/ADR-2610261238-import-aws-profiles.md",
+        "src/ports/mod.rs",
+        "src/adapters/secondary/fs_store.rs",
+        "src/adapters/secondary/process_runner.rs",
+        "src/adapters/secondary/aws_cli.rs",
+        "src/usecases/mod.rs",
+        "docs/adrs/ADR-2610261244-manage-claude-md-skills-agents.md",
+        "tests/profiles.rs",
+        "tests/assets.rs",
+        "src/adapters/secondary/fs_assets.rs",
+        "docs/adrs/ADR-2610261255-ratatui-tui.md",
+        "src/domain/mod.rs",
+        "src/adapters/primary/tui.rs",
+        "tests/tui.rs",
+        "README.md",
+        "/Users/gary/.claude/projects/-Volumes-Crucial-projects-switcher/memory/user-builds-with-hexa.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/hexa-cli/tests/docs_state_the_enforced_layer_rule.rs",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/hexa-cli/assets/templates/claude-md-hexa-section.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/README.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/ARCHITECTURE.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/CLAUDE.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/docs/adrs/ADR-2610261356-primary-adapters-may-drive-usecases.md",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/hexa-cli/tests/grade_floor_names_what_it_let_through.rs",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/hexa-cli/src/commands/analyze.rs",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/hexa-cli/src/commands/scaffold.rs",
+        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/a5898ad6-c8ae-4fce-9bb6-372f479aa638/scratchpad/hexa/docs/adrs/ADR-2610261420-a-grade-floor-names-what-it-let-through.md",
+        "/Users/gary/.claude/projects/-Volumes-Crucial-projects-switcher/memory/hexa-primary-boundary-gap.md",
+        "/Users/gary/.claude/projects/-Volumes-Crucial-projects-switcher/memory/MEMORY.md"
+      ],
+      "gate": "cargo test && hexa analyze . --grade A+",
+      "pid": 2541,
+      "pid_start": null,
+      "stage": "done",
+      "tasks": [
+        {
+          "done_at": "2026-10-26T16:21:40.256155+00:00",
+          "status": "done",
+          "title": "domain: names, env parsing, resolution, launch plan, args"
+        },
+        {
+          "done_at": "2026-10-26T16:21:40.264922+00:00",
+          "status": "done",
+          "title": "ports + fs adapters: store, pins, exec launcher"
+        },
+        {
+          "done_at": "2026-10-26T16:21:40.273136+00:00",
+          "status": "done",
+          "title": "usecases + composition root + main"
+        },
+        {
+          "done_at": "2026-10-26T16:21:40.281338+00:00",
+          "status": "done",
+          "title": "end-to-end: binary launches with exact env"
+        },
+        {
+          "done_at": "2026-10-26T16:21:40.289380+00:00",
+          "status": "done",
+          "title": "grade A, remove skeleton counter"
+        },
+        {
+          "done_at": "2026-10-26T16:43:10.474157+00:00",
+          "status": "done",
+          "title": "domain: segment, compose, settings json, aws names + env, commands"
+        },
+        {
+          "done_at": "2026-10-26T16:43:10.482130+00:00",
+          "status": "done",
+          "title": "ports+adapters: CommandRunner, AwsProfiles, store writes"
+        },
+        {
+          "done_at": "2026-10-26T16:43:10.490182+00:00",
+          "status": "done",
+          "title": "usecases + wiring: statusline, import aws, seeded new"
+        },
+        {
+          "done_at": "2026-10-26T16:43:10.501631+00:00",
+          "status": "done",
+          "title": "e2e: statusline wraps a real script; import aws with fake aws"
+        },
+        {
+          "done_at": "2026-10-26T16:43:10.509842+00:00",
+          "status": "done",
+          "title": "grade A, README, ADR evidence"
+        },
+        {
+          "done_at": "2026-10-26T16:55:02.808918+00:00",
+          "status": "done",
+          "title": "domain: kinds, names, paths, front matter, asset commands"
+        },
+        {
+          "done_at": "2026-10-26T16:55:02.817609+00:00",
+          "status": "done",
+          "title": "fs_store: per-item agent links, unshared, prune dead links"
+        },
+        {
+          "done_at": "2026-10-26T16:55:02.830813+00:00",
+          "status": "done",
+          "title": "AssetStore port + FsAssetStore: list/read/add/remove to trash"
+        },
+        {
+          "done_at": "2026-10-26T16:55:02.848375+00:00",
+          "status": "done",
+          "title": "usecases + wiring: lookup, add, rm, find, native read-only"
+        },
+        {
+          "done_at": "2026-10-26T16:55:02.860058+00:00",
+          "status": "done",
+          "title": "e2e + grade A + README + evidence"
+        },
+        {
+          "done_at": "2026-10-26T17:03:54.262255+00:00",
+          "status": "done",
+          "title": "domain Overview + Command::Ui; Browser port; usecases::App"
+        },
+        {
+          "done_at": "2026-10-26T17:03:54.272195+00:00",
+          "status": "done",
+          "title": "tui State: keys, tabs, search, confirm delete, default, launch"
+        },
+        {
+          "done_at": "2026-10-26T17:03:54.284983+00:00",
+          "status": "done",
+          "title": "tui draw with TestBackend; run loop with ratatui::init/restore"
+        },
+        {
+          "done_at": "2026-10-26T17:03:54.297603+00:00",
+          "status": "done",
+          "title": "wire ccs ui; e2e; grade A; README; evidence"
+        }
+      ],
+      "updated": "2026-10-26T18:37:12.248539+00:00"
+    },
+    "ea311e23-ea0f-4a4f-89e6-4b7e1d4fcf19": {
+      "adr": "ADR-2610261933",
+      "evidence": "cargo test 2>&1 | grep \"test result\" && hexa analyze . --grade A+ 2>&1 | grep \"Architecture grade\"",
+      "gate": "cargo test && hexa analyze . --grade A+",
+      "pid": 51691,
+      "pid_start": null,
+      "stage": "done",
+      "tasks": [
+        {
+          "done_at": "2026-10-26T19:36:06.959610+00:00",
+          "status": "done",
+          "title": "tests first: folder share (real fs), path input adapter, TUI shared row, TUI add, TUI folder share"
+        },
+        {
+          "done_at": "2026-10-26T19:38:56.774616+00:00",
+          "status": "done",
+          "title": "ports: Browser on Target, add, complete_path; PathInput; AssetStore::trash"
+        },
+        {
+          "done_at": "2026-10-26T19:38:56.786751+00:00",
+          "status": "done",
+          "title": "usecases: folder share; App on Target"
+        },
+        {
+          "done_at": "2026-10-26T19:38:56.798993+00:00",
+          "status": "done",
+          "title": "adapters: fs_paths, fs_assets trash; wiring"
+        },
+        {
+          "done_at": "2026-10-26T19:49:04.739867+00:00",
+          "status": "done",
+          "title": "tui: shared row, Mode::Input, folder confirm"
+        },
+        {
+          "done_at": "2026-10-26T19:49:04.756916+00:00",
+          "status": "done",
+          "title": "probes, pty check, README, ADR evidence, close workplan draft"
+        }
+      ],
+      "updated": "2026-10-26T19:49:09.708505+00:00"
+    }
+  }
+}
