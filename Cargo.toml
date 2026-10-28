@@ -1,6 +1,6 @@
 [package]
 name = "ccs"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 
 # Stand alone even when scaffolded inside another cargo workspace.
