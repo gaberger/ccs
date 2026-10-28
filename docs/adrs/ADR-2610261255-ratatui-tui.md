@@ -1,7 +1,7 @@
 # ADR-2610261255: A ratatui TUI as the first primary adapter
 
 **Status:** Accepted
-**Partly-Superseded-By:** ADR-2610261643 (§10, §18: entry point, screen and keys; phase 4: `native`). Still in force: the `Browser` port, Decisions 3, 5 and 6, and the boundary test. See "Later changes (2026-10-27)".
+**Partly-Superseded-By:** ADR-2610261643 (§10, §18: entry point, screen and keys; phase 4: `native`), then ADR-2610281305 (2026-10-28: the screen is four columns, in `src/adapters/primary/tui/`). Still in force: ratatui, the `Browser` port, Decisions 3, 5 and 6, the editor handoff, and the boundary test. See "Later changes".
 **Date:** 2026-10-26
 **Drivers:** The user asked for the switcher to use ratatui (https://ratatui.rs/). With profiles, skills, agents and CLAUDE.md all managed by `ccs`, the command line asks the user to remember names; a screen can show them.
 

@@ -5,7 +5,7 @@
 //! A skill folder is any directory holding `SKILL.md`; every other directory is
 //! a folder. Removing moves to the trash; nothing is erased.
 
-use crate::ports::{front_matter_description, manifest_field, Error, ItemKind, Library, LibraryItem};
+use crate::ports::{front_matter_description, front_matter_name, manifest_field, Error, ItemKind, Library, LibraryItem, PluginContents, PluginPart};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -46,12 +46,16 @@ impl FsLibrary {
             }
             let p = e.path();
             let sub = if folder.is_empty() { file.clone() } else { format!("{folder}/{file}") };
-            let item = |name: String, main: &Path| LibraryItem {
-                kind,
-                name,
-                folder: folder.into(),
-                description: fs::read_to_string(main).ok().and_then(|t| front_matter_description(&t)),
-                source: p.clone(),
+            let item = |name: String, main: &Path| {
+                let text = fs::read_to_string(main).ok();
+                LibraryItem {
+                    kind,
+                    name,
+                    folder: folder.into(),
+                    description: text.as_deref().and_then(front_matter_description),
+                    shown_name: text.as_deref().and_then(front_matter_name),
+                    source: p.clone(),
+                }
             };
             match kind {
                 ItemKind::Plugin => {
@@ -162,6 +166,35 @@ impl Library for FsLibrary {
     fn read(&self, item: &LibraryItem) -> Result<String, Error> {
         let p = self.main_file(item);
         fs::read_to_string(&p).map_err(io_err(&p))
+    }
+
+    fn plugin_contents(&self, plugin: &LibraryItem) -> PluginContents {
+        if plugin.kind != ItemKind::Plugin {
+            return PluginContents::default();
+        }
+        let part = |file: String, main: &Path| {
+            let text = fs::read_to_string(main).ok();
+            PluginPart { file, shown_name: text.as_deref().and_then(front_matter_name), description: text.as_deref().and_then(front_matter_description) }
+        };
+        let listed = |dir: &str| {
+            let mut entries: Vec<_> = fs::read_dir(plugin.source.join(dir)).into_iter().flatten().flatten().collect();
+            entries.sort_by_key(|e| e.file_name());
+            entries
+        };
+        let skills = listed("skills")
+            .into_iter()
+            .filter(|e| e.path().join("SKILL.md").is_file())
+            .map(|e| part(e.file_name().to_string_lossy().into_owned(), &e.path().join("SKILL.md")))
+            .collect();
+        let agents = listed("agents")
+            .into_iter()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let stem = name.strip_suffix(".md")?.to_string();
+                e.path().is_file().then(|| part(stem, &e.path()))
+            })
+            .collect();
+        PluginContents { skills, agents }
     }
 
     fn make_folder(&self, kind: ItemKind, folder: &str) -> Result<(), Error> {

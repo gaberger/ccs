@@ -1,0 +1,15 @@
+{
+  "adr": "ADR-2026-04-11-0227",
+  "created_at": "2026-10-28T14:30:45.973749-04:00",
+  "id": "draft-2610281430-library-remove-ignores-unreadable-kits",
+  "kind": "workplan-draft",
+  "next_steps": [
+    "Run /hexa-feature-dev to expand this draft into a full workplan",
+    "Or run `hexa plan drafts approve draft-2610281430-library-remove-ignores-unreadable-kits.json`",
+    "Or run `hexa plan drafts clear --name draft-2610281430-library-remove-ignores-unreadable-kits`"
+  ],
+  "notes": "This is a draft created by ADR-2026-04-11-0227 auto-invoke. It contains only the original prompt — no specs, steps, or tiers have been generated yet. The planner agent will fill these in when the draft is picked up.",
+  "origin": "auto-invoke",
+  "prompt": "library_remove ignores unreadable kits when it reports which kits used the removed item (src/usecases/mod.rs, fn library_remove): a kit whose uses file cannot be read is skipped, so the report can say no kit used the item when one did. Found and confirmed by hexa harden on 2026-10-28 (ADR-2610281305, What hardening changed); its fix did not pass the gate. Write the test first in tests/kits.rs (an unreadable kit that picked the item is named, or the remove stops), red on today's code. Gate: cargo test (awk guard) && cargo clippy --all-targets -- -D warnings && hexa analyze . --grade A+ --exit-code.",
+  "status": "pending-planner"
+}

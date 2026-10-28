@@ -340,3 +340,69 @@ fn a_shell_plan_starts_in_the_profile_folder_with_its_variables() {
     assert!(plan.args.is_empty(), "a shell gets no claude arguments");
     assert!(matches!(usecases::shell_plan(&store, &name("ghost")), Err(CcsError::NoProfile(_))));
 }
+
+/// A real store whose `write_env` or `write_settings_if_absent` fails, to stop an import halfway.
+/// `only` limits the failure to one profile; `None` fails them all.
+struct Failing<S> {
+    inner: S,
+    env: bool,
+    settings: bool,
+    only: Option<&'static str>,
+}
+impl<S> Failing<S> {
+    fn hits(&self, n: &ProfileName) -> bool { self.only.is_none_or(|o| o == n.as_str()) }
+}
+impl<S: ccs::ports::ProfileStore> ccs::ports::ProfileStore for Failing<S> {
+    fn names(&self) -> Vec<ProfileName> { self.inner.names() }
+    fn exists(&self, n: &ProfileName) -> bool { self.inner.exists(n) }
+    fn load(&self, n: &ProfileName) -> Result<ccs::domain::Profile, CcsError> { self.inner.load(n) }
+    fn create(&self, n: &ProfileName, from: Option<&ProfileName>) -> Result<(), CcsError> { self.inner.create(n, from) }
+    fn discard(&self, n: &ProfileName) -> Result<(), CcsError> { self.inner.discard(n) }
+    fn default_name(&self) -> Option<String> { self.inner.default_name() }
+    fn set_default(&self, n: &ProfileName) -> Result<(), CcsError> { self.inner.set_default(n) }
+    fn clear_default(&self) -> Result<(), CcsError> { self.inner.clear_default() }
+    fn folder(&self, n: &ProfileName) -> PathBuf { self.inner.folder(n) }
+    fn env_file(&self, n: &ProfileName) -> PathBuf { self.inner.env_file(n) }
+    fn write_env(&self, n: &ProfileName, text: &str) -> Result<(), CcsError> {
+        if self.env && self.hits(n) { Err(CcsError::Io("disk full".into())) } else { self.inner.write_env(n, text) }
+    }
+    fn write_settings_if_absent(&self, n: &ProfileName, text: &str) -> Result<bool, CcsError> {
+        if self.settings && self.hits(n) { Err(CcsError::Io("disk full".into())) } else { self.inner.write_settings_if_absent(n, text) }
+    }
+    fn read_kits(&self, n: &ProfileName) -> Result<Vec<String>, CcsError> { self.inner.read_kits(n) }
+    fn set_kits(&self, n: &ProfileName, kits: &[String]) -> Result<(), CcsError> { self.inner.set_kits(n, kits) }
+}
+
+#[test]
+fn an_import_that_fails_halfway_leaves_no_profile_and_can_run_again() {
+    for (env, settings) in [(true, false), (false, true)] {
+        let sb = Sandbox::new();
+        // A login already in the folder is not the import's to remove.
+        sb.write("profiles/bed/config/.claude.json", "{}");
+        let broken = Failing { inner: sb.store(), env, settings, only: None };
+        let out = usecases::import_aws(&broken, &FakeAws, &["bed".into()], false, None, "/bin/ccs").unwrap();
+        assert!(matches!(&out[..], [ImportOutcome::Skipped { aws, reason }] if aws == "bed" && reason.contains("disk full")));
+        assert!(!broken.exists(&name("bed")), "a half-made import must not count as a profile (env={env})");
+        assert!(sb.home().join("bed/config/.claude.json").is_file(), "the login stays");
+
+        let store = sb.store();
+        let out = usecases::import_aws(&store, &FakeAws, &["bed".into()], false, None, "/bin/ccs").unwrap();
+        assert_eq!(out, [ImportOutcome::Created { name: "bed".into(), region: Some("us-west-2".into()) }]);
+        assert!(usecases::load(&store, &name("bed")).unwrap().env.contains(&("AWS_PROFILE".into(), "bed".into())));
+        assert!(fs::read_to_string(sb.home().join("bed/config/settings.json")).unwrap().contains("statusline"));
+    }
+}
+
+/// One profile failing does not lose the ones the same run already made.
+#[test]
+fn an_import_that_fails_for_one_profile_still_reports_the_others() {
+    let sb = Sandbox::new();
+    let broken = Failing { inner: sb.store(), env: true, settings: false, only: Some("aws-default") };
+    let wanted = ["bed".into(), "default".into(), "noregion".into()];
+    let out = usecases::import_aws(&broken, &FakeAws, &wanted, false, None, "/bin/ccs").unwrap();
+    assert_eq!(out[0], ImportOutcome::Created { name: "bed".into(), region: Some("us-west-2".into()) });
+    assert!(matches!(&out[1], ImportOutcome::Skipped { aws, reason } if aws == "default" && reason.contains("disk full")));
+    assert_eq!(out[2], ImportOutcome::Created { name: "noregion".into(), region: None });
+    assert!(broken.exists(&name("bed")) && broken.exists(&name("noregion")));
+    assert!(!broken.exists(&name("aws-default")), "the failed one is undone");
+}

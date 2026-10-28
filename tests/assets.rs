@@ -214,3 +214,19 @@ fn the_app_makes_copies_edits_and_imports_profiles_through_the_port() {
     assert!(sb.home().join("library/skills/imported/demo/SKILL.md").is_file() || app.library(Kind::Skill).0.iter().any(|i| i.name == "demo"));
     assert!(app.kits().contains(&"imported".to_string()));
 }
+
+/// A kit whose `uses` file cannot be read stops the remove: read as "uses
+/// nothing", it would be left out of the report with a dangling line.
+#[test]
+fn removing_an_item_refuses_when_a_kit_cannot_be_read() {
+    let sb = Sandbox::new();
+    sb.write("home/src/rev.md", AGENT);
+    let (lib, kits) = (ccs::library(&sb.home()), ccs::kit_store(&sb.home()));
+    usecases::library_add_source(&lib, &ccs::fetcher(), "rev.md", &sb.root.join("home/src/rev.md"), "").unwrap();
+    usecases::kit_new(&kits, &lib, "net").unwrap();
+    sb.write("profiles/kits/net/uses", "agents/rev\nnot a line ccs can read !!\n");
+
+    let rev = Use::Item(Kind::Agent, "rev".into());
+    assert!(usecases::library_remove(&lib, &kits, &rev).is_err(), "an unreadable kit is an error, not a kit that uses nothing");
+    assert!(sb.home().join("library/agents/rev.md").is_file(), "nothing is trashed");
+}

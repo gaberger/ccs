@@ -1,3 +1,5 @@
 /target
 .hexa/loop.lock
 .claude/worktrees/
+graph-out/
+tui_designs/prototype.html

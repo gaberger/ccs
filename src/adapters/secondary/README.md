@@ -69,6 +69,27 @@ themselves.
   binary to `.ccs-upgrade-<pid>` beside the running one, sets its mode to
   `0755`, and renames it over the running binary. If any step fails,
   the copy included, it removes the temporary file. A failed `download` removes its folder.
+- **A kit save is locked and merged.** `set_uses` locks the kit's folder,
+  re-reads `uses`, and merges any change another process made since this
+  process last read it (`seen`, a merge base only). An unreadable `uses` is an
+  error, never an empty kit.
+- **A build is swapped in whole.** `build` assembles a staging folder and
+  swaps it with `.build/<kit>` in one call (`renamex_np`, `renameat2`); a
+  running session never loses its plugin. Two picked agents with one file name
+  fail the build and name both sources. `write_prompt` writes and renames.
+- **A kit save is whole or nothing.** `FsKitStore::set_uses` writes
+  `uses.tmp-<pid>` beside `uses` and renames it over; on any error it removes
+  the temporary file, and a folder it cannot write in refuses the save. Comments
+  and blank lines stay where they are; a line still picked keeps its place; a
+  changed line takes the place of the one it replaced; a new pick goes last.
+- **Two saves of one kit at once both count.** `set_uses` holds a lock on the
+  kit's folder, re-reads `uses`, and applies only the picks this process added
+  or dropped since its own last `uses`/`set_uses` of that kit. A pick another
+  process added or dropped in between stays as that process left it.
+- **`build_dir` and `prompt_path` only name paths.** `build` and
+  `write_prompt` write there and nowhere else.
+- **Plugin contents** are `skills/*/SKILL.md` and `agents/*.md` under the
+  plugin folder, sorted by file name, each with its front-matter name.
 - **Name collisions are errors.** `add`, `move_to` and `rename_folder` return
   `Error::AssetExists`. `FsKitStore::rename` returns `Error::Usage`.
 - **Missing or unreadable files read as absent.** This applies to

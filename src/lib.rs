@@ -222,6 +222,11 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             print!("{}", usecases::exports(&store, &resolve(n)?)?);
             Ok(0)
         }
+        Command::Loads(n) => {
+            let name = resolve(n)?;
+            print!("{}", usecases::loads(&name, &usecases::load_plan(&store, &kits, &lib, &name, None)?));
+            Ok(0)
+        }
         Command::Doctor(n) => {
             let name = resolve(n)?;
             println!("Profile: {}", name.as_str());
@@ -405,7 +410,7 @@ fn kit_command(
             }
         }
         KitCmd::New(k) => {
-            let k = usecases::kit_new(kits, &k)?;
+            let k = usecases::kit_new(kits, lib, &k)?;
             println!("Created kit '{0}'. Add to it with: ccs kit use {0} skills/<name> | skills/<folder>/", k.as_str());
         }
         KitCmd::Edit(k) => {
@@ -413,27 +418,13 @@ fn kit_command(
             println!("✓ edited the instructions of kit {k}");
         }
         KitCmd::Rename(old, new) => {
-            usecases::kit_rename(store, kits, &old, &new)?;
+            usecases::kit_rename(store, kits, lib, &old, &new)?;
             println!("✓ kit {old} is now {new}, in every profile that had it");
         }
         KitCmd::Remove(k) => println!("✓ moved kit {k} to {}; no profile uses it now", usecases::kit_remove(store, kits, &k)?.display()),
         KitCmd::Show(k) => {
-            let (uses, contents) = usecases::kit_show(kits, lib, &k)?;
             println!("kit {k}");
-            println!("uses:");
-            for u in &uses {
-                println!("  {}", u.line());
-            }
-            println!("gives:");
-            for i in &contents.items {
-                println!("  {}  {}", i.kind.dir(), i.path());
-            }
-            if !contents.missing.is_empty() {
-                println!("not in the library:");
-                for m in &contents.missing {
-                    println!("  {m}");
-                }
-            }
+            print!("{}", usecases::lines_text(&usecases::kit_show(kits, lib, &k)?));
         }
         KitCmd::Use(k, entries) => {
             usecases::kit_use(kits, lib, &k, &entries)?;

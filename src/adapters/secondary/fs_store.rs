@@ -124,6 +124,18 @@ impl ProfileStore for FsProfileStore {
         })
     }
 
+    fn discard(&self, name: &Name) -> Result<(), Error> {
+        let path = self.dir(name).join(ENV_FILE);
+        match fs::remove_file(&path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(io_err("cannot remove", &path)(e)),
+            _ => {}
+        }
+        // remove_dir, not remove_dir_all: a folder that still holds something keeps it.
+        let _ = fs::remove_dir(self.config(name));
+        let _ = fs::remove_dir(self.dir(name));
+        Ok(())
+    }
+
     fn default_name(&self) -> Option<String> {
         let s = fs::read_to_string(self.home.join(DEFAULT_FILE)).ok()?;
         let s = s.trim();
@@ -143,9 +155,13 @@ impl ProfileStore for FsProfileStore {
         }
     }
 
-    fn kits(&self, name: &Name) -> Vec<String> {
-        let text = fs::read_to_string(self.dir(name).join(KITS_FILE)).unwrap_or_default();
-        text.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
+    fn read_kits(&self, name: &Name) -> Result<Vec<String>, Error> {
+        let path = self.dir(name).join(KITS_FILE);
+        let text = match fs::read_to_string(&path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+            r => r.map_err(io_err("cannot read", &path))?,
+        };
+        Ok(text.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
     }
 
     fn set_kits(&self, name: &Name, kits: &[String]) -> Result<(), Error> {
@@ -163,7 +179,11 @@ impl ProfileStore for FsProfileStore {
         let path = self.config(name).join(SETTINGS_FILE);
         // create_new: never replace a settings.json, even one made a moment ago.
         match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut f) => io::Write::write_all(&mut f, text.as_bytes()).map(|_| true).map_err(io_err("cannot write", &path)),
+            // A half-written file is ours, made a moment ago: remove it, so a retry writes it whole.
+            Ok(mut f) => io::Write::write_all(&mut f, text.as_bytes()).map(|_| true).map_err(|e| {
+                let _ = fs::remove_file(&path);
+                io_err("cannot write", &path)(e)
+            }),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
             Err(e) => Err(io_err("cannot write", &path)(e)),
         }

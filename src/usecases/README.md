@@ -42,7 +42,7 @@ All items live in `mod.rs` (`crate::usecases`).
 
 | Symbol | Purpose |
 |---|---|
-| `prepare_launch(store, kits, lib, name, chosen, args, ccs_bin)` | Returns `(LaunchPlan, warnings)`. It uses the `chosen` kits, or the profile's own kits if none are chosen. Each kit's skills and agents are rebuilt into a kit dir (`KitStore::build`). Picked plugins are loaded as themselves, without duplicates. Kit instructions are joined into one prompt file. It adds `--settings <launch_settings>` and the kit args. |
+| `prepare_launch(store, kits, lib, name, chosen, args, ccs_bin)` | `load_plan`, then `KitStore::build` for each kit, then `write_prompt` when a kit has instructions. Returns `(LaunchPlan, warnings)`; the paths in the launch come from `build_dir` and `prompt_path`. |
 | `launch(launcher, plan)` | Replaces the process with `claude`. Returns a `CcsError` only on failure. |
 
 ### Status line
@@ -71,9 +71,12 @@ All items live in `mod.rs` (`crate::usecases`).
 | `plugin_update(lib, fetch, which)` | `git pull` every plugin, or the one in `which`. Returns one line per plugin. |
 | `library_mkdir`, `library_move`, `library_rename_folder` | Folder operations on skills and agents. Moving or renaming a folder rewrites the kit lines under it. Plugins have no folders. |
 | `library_remove(lib, kits, what)` | Moves an item or folder to the trash. Returns `LibraryRemoved { trashed, kits }`, where `kits` lists the kits that used it. |
-| `library_show`, `library_edit` | Reads an item, or opens its main file in the editor. |
+| `library_show`, `library_edit` | Reads an item (for a plugin: its skills and agents), or opens its main file in the editor. |
 | `kit_new`, `kit_remove`, `kit_rename` | Kit lifecycle. Remove detaches the kit from every profile. Rename keeps the kit's place in each profile's list. |
-| `kit_show(kits, lib, raw)` | The kit's `Use` lines and their resolved `KitContents`. |
+| `kit_show(kits, lib, raw)` | The kit's lines, each with what it gives (`Vec<LineGives>`). |
+| `load_plan(store, kits, lib, name, chosen)` | What a profile loads: a `LoadPlan`. Reads only; builds nothing. |
+| `planned_launch(...)` | The launch `prepare_launch` would make, with nothing built. |
+| `loads(profile, plan)`, `lines_text(lines)` | The text of `ccs loads` and `ccs kit show`. |
 | `kit_use`, `kit_drop` | Add or remove entries. `kit_use` requires each entry to resolve in the library now. |
 | `kit_attach(store, kits, kit, profile, attach)` | Attaches a kit to a profile (moving it to the end of the list) or detaches it. |
 | `kit_edit(kits, editor, raw)` | Opens the kit's instructions file in the editor. |
@@ -95,7 +98,8 @@ All items live in `mod.rs` (`crate::usecases`).
 
 Private helpers: `profile_edit`, `imported_as`, `legacy_path`, `adopt`,
 `fill_kit`, `attach_last`, `library_items`, `library_item`, `existing_kit`,
-`library_add`, `no_folders`, `rewrite_kits`, `set_profile_kits`.
+`library_add`, `no_folders`, `plan_kit_rewrites`, `write_kit_rewrites`,
+`set_profile_kits`.
 
 ## Invariants
 
@@ -110,13 +114,24 @@ Private helpers: `profile_edit`, `imported_as`, `legacy_path`, `adopt`,
 - Name resolution order is: explicit, then pinned, then `CCS_PROFILE`, then
   default (`domain::resolve`). A resolved name must exist, otherwise
   `CcsError::NoProfile`. If no source gives a name, `CcsError::NoneResolved`.
+- Only `prepare_launch` writes a build. `load_plan`, `planned_launch`, `loads`
+  and `kit_show` read only (ADR-2610281305, gate `tests/loads.rs`).
+- `kit_new` and `kit_rename` refuse a library plugin's name.
+- `kit_rename` rewrites the profiles first and renames the kit folder last.
+  If one step fails, it puts back the profiles it already rewrote, so every
+  profile still names a kit that exists.
+- `doctor` warns when two agents in one kit share a front-matter name.
 - `new_profile`, `kit_new` and `kit_rename` never overwrite an existing profile
   or kit. `import_aws` skips existing profiles and gives a reason.
   `seed_statusline` writes only if `settings.json` is absent.
 - A kit refers to library items by name, not path. Item names are unique per
   `Kind` (`library_add` rejects a duplicate with `AssetExists`). Moving an item
   therefore changes no kit. Moving or renaming a folder must rewrite the kit
-  `Use::Folder` lines under it (`rewrite_kits`).
+  `Use::Folder` lines under it. Every kit is read before the folder moves
+  (`plan_kit_rewrites`), so an unreadable kit refuses the move while a retry
+  can still find the folder; after the move, a kit that cannot be written puts
+  back the kits already written and moves the folder back
+  (`write_kit_rewrites`), so no kit is left on a folder that is gone.
 - Plugins have no folders. `library_mkdir`, `library_move`,
   `library_rename_folder`, and `library_add` with a non-empty folder return
   `no_folders()` for `Kind::Plugin`. A plugin's library name is its manifest

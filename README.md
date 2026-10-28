@@ -27,7 +27,7 @@ your stock `~/.claude`. The decisions are in
 - Claude Code (`claude` on your PATH), with `--plugin-dir`
 - macOS (Apple silicon or Intel) or Linux (x86_64) for a release; any Unix from source
 - From a release: the GitHub CLI, `gh`, logged in (the repository is private)
-- From source: Rust 1.88+ (`cargo`), because `ratatui` 0.30, the one dependency, declares it
+- From source: Rust 1.89+ (`cargo`): kit saves take a file lock with `std::fs::File::lock`, stable since 1.89 (`ratatui` 0.30 needs 1.88)
 
 ## Install
 
@@ -77,15 +77,16 @@ from `/login` inside the profile.
 ## Usage
 
 ```
-ccs [claude args…]             Home: choose a profile and kits, then ⏎; e opens a page to change them
+ccs [claude args…]             the column screen: profile, its kits, what is in the kit, the library
 ccs <profile> [+kit…] [args…]  start claude with <profile>; +kit replaces its kits for this run
 ccs list                       list profiles with their kits (* = resolved)
 ccs new <name> [--from <p>]    make a profile (copies variables, kits, settings; never login)
 ccs default [<name>]           show or set the default profile
 ccs env [<name>]               print exports: eval "$(ccs env work)"
 ccs doctor [<name>]            check a profile and its kits; exits 1 on a failure
+ccs loads [<name>]             what a profile loads: each kit, line and item; builds nothing
 ccs which                      print the resolved profile
-ccs ui                         the same Home, from anywhere
+ccs ui                         the same screen, from anywhere
 ccs statusline [-- <cmd…>]     status line segment; wraps an existing status line command
 ccs statusline --auto          what every launch sets: the segment, then the project's or profile's own status line
 ccs import                     copy ~/.claude skills, agents, CLAUDE.md into the library (kit 'imported')
@@ -158,27 +159,28 @@ read an agent through a link, so an agent edit applies from the next launch),
 and the instructions are appended to the system prompt. In Claude Code a kit's
 skills are named `<kit>:<skill>`, for example `/net:find-nqe-query`.
 
-**The TUI.** `ccs` (or `ccs ui`) opens Home, the launch screen. Every other
-screen is a page you open from it, and Esc goes back. The top line always says
-where you are and which profile is current:
-`ccs › claude-bedrock-gary › kit network › library        ⬡ claude-bedrock-gary +base`.
+**The TUI.** `ccs` (or `ccs ui`) opens one screen of four columns, used left
+to right (ADR-2610281305): **1 profile → 2 its kits → 3 what is in the kit →
+4 add from the library**. It opens on the profile `ccs` would launch. The top
+line says where you are: `ccs  1 work › 2 research › 3 in research › 4 add from library`.
+While the cursor is on a profile, column 3 shows everything that profile
+loads. After every change, the screen shows the `ccs` command that does the
+same thing, and `z` undoes it.
 
 ```
-Home           1 · Choose a profile, 2 · Choose kits, 3 · ⏎ start; space ticks a kit · tab switches lists
-               each list ends with its actions: + New profile · ⇣ Import · ◆ Library · + New kit
-               → (or e) opens the profile or kit · s saves the ticks as its default
-               n new profile (new kit on the kit list) · i import · l the library
-a profile      ⏎ Launch · its kits (space adds or removes; the highlighted one shows what it holds;
-               ⏎ opens it) · Variables (⏎ edits profile.env) · default · copy · shell · folder, doctor
-a kit          what it holds, one line per entry with its count (space removes; ⏎ views or opens)
-               + Add from the library · CLAUDE.md (⏎ edits) · Used by (space switches) · rename · delete
-the library    from a kit: the tree with [x] picks for it (space picks, p picked only)
-               from Home (l): manage it: space mark · m move · + to kit · a add · n folder
-               r rename · x delete · e edit · v view · u update plugins
-everywhere     ←→ skills, agents, plugins (in the library) · ↑↓ (or k j) PgUp/PgDn Home/End (or g G) · / search
-               ← or esc back (esc in the library) · q or Ctrl-C quit
-the mouse      click a row to select it, click it again to open or run it · click a [ ] box to tick it
-               click 3 · ⏎ start to launch · click the breadcrumb to go back · right click: back · wheel scrolls
+1 profile      ⏎ starts claude · → its kits · e edit profile.env · d default · c copy · ! shell
+               n new profile · i import (~/.claude, AWS profiles, an old layout)
+2 its kits     the profile's own kits first, then "other kits"; space puts one on or takes it off
+               ⏎ opens it · n makes a kit and puts it on this profile · e instructions · r rename · x delete
+3 in the kit   each line with the items it gives · space drops a line · e on the first row: instructions
+4 library      [x] picked · [^] comes with a picked folder or plugin · [-] partly picked · [ ] not
+               space picks · ⏎ opens a folder or plugin · / searches (a name match comes first)
+               v reads the item · the two lines under it show its whole description
+               a add · n folder · m move · r rename folder · x delete · e edit · u update plugins
+everywhere     → on · ← back (in the library, ← first closes an open folder) · z undo
+               ↑↓ (or k j) PgUp/PgDn Home/End (or g G) · esc back, and quit from column 1 · q quit
+the mouse      click a row to select it, again to act on it · click a [ ] box to pick
+               click a step of the top line to go there · right click: back · wheel scrolls
 ```
 
 With the mouse on, a plain drag no longer selects terminal text; hold Shift (or
@@ -254,10 +256,10 @@ src/
   adapters/secondary/process_editor.rs — opens $VISUAL / $EDITOR
   adapters/secondary/process_runner.rs — runs a wrapped status line command
   adapters/secondary/aws_cli.rs        — AWS profile names and regions, via the aws CLI
-  adapters/primary/tui.rs              — the ratatui TUI; talks to ports::Browser only
+  adapters/primary/tui/                — the ratatui TUI, four columns; talks to ports::Browser only
   lib.rs                               — composition root
   main.rs                              — entry point
-tests/                                 — the gate: domain, profiles, kits, plugins, migrate, upgrade, assets, boundaries, the TUI, the real binary
+tests/                                 — the gate: domain, profiles, kits, plugins, loads, migrate, upgrade, assets, boundaries, the TUI, TUI/CLI parity, the real binary
 .github/workflows/                     — CI (the gate on pushes to main and on pull requests) and Release (on a vX.Y.Z tag)
 docs/adrs/                             — decisions
 start.sh                               — build and run, or --install
@@ -265,8 +267,10 @@ start.sh                               — build and run, or --install
 
 ## How It Works
 
-`ccs` reads the profile and its kits, rebuilds each kit from the library, then
-builds a launch plan: unset the provider variables inherited from your shell
+`ccs` reads the profile and its kits and works out what they load: the items
+each line picks, the plugins (each once), and the kits' instructions. That
+plan is one value, and `ccs loads` prints it without building anything. A
+launch then rebuilds each kit from the library and builds a launch plan: unset the provider variables inherited from your shell
 (so a Bedrock export cannot leak into a personal profile), set the profile's
 variables, `CLAUDE_CONFIG_DIR`, `CCS_PROFILE` and `CCS_KITS`, and put these
 in front of your arguments: `--settings` with the status line, `--plugin-dir`

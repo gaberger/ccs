@@ -11,7 +11,7 @@ use crate::domain::{
 
 /// Re-exported so an adapter needs to import nothing but this module (rule 4).
 pub use crate::domain::{
-    front_matter_description, manifest_field, resolve_kit, AwsRow as AwsProfileRow, ImportOutcome as AwsImport, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
+    front_matter_description, front_matter_name, manifest_field, pick_in, rank, resolve_kit, Found, LineGives, LoadPlan, PlannedKit, PluginContents, PluginPart, AwsRow as AwsProfileRow, ImportOutcome as AwsImport, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
     Kind as ItemKind, KitName as Kit, LaunchPlan as Plan, LegacyItem as OldItem, LegacyLayout as OldLayout,
     LegacyProfile as OldProfile, LibItem as LibraryItem, LibraryRemoved as Removed, ListEntry as ProfileRow,
     Overview as ProfileOverview, Pick, Profile as LoadedProfile, ProfileName as Name, TreeRow, Use as Entry,
@@ -26,6 +26,10 @@ pub trait ProfileStore {
     fn load(&self, name: &ProfileName) -> Result<Profile, CcsError>;
     /// Make an empty profile, or one with `from`'s variables, kits and settings — never its login.
     fn create(&self, name: &ProfileName, from: Option<&ProfileName>) -> Result<(), CcsError>;
+    /// Undo a `create(name, None)` that could not be finished: remove `profile.env`,
+    /// so `name` is no longer a profile, and the folders if that empties them.
+    /// Anything else in the folder, such as a login, stays.
+    fn discard(&self, name: &ProfileName) -> Result<(), CcsError>;
     fn default_name(&self) -> Option<String>;
     fn set_default(&self, name: &ProfileName) -> Result<(), CcsError>;
     fn clear_default(&self) -> Result<(), CcsError>;
@@ -37,8 +41,14 @@ pub trait ProfileStore {
     fn write_env(&self, name: &ProfileName, text: &str) -> Result<(), CcsError>;
     /// Write the profile's `settings.json` unless one exists. Returns whether it wrote.
     fn write_settings_if_absent(&self, name: &ProfileName, text: &str) -> Result<bool, CcsError>;
-    /// The kits a profile launches with by default, in order.
-    fn kits(&self, name: &ProfileName) -> Vec<String>;
+    /// The kits a profile launches with by default, in order. No file is no
+    /// kits; a file that cannot be read is an error.
+    fn read_kits(&self, name: &ProfileName) -> Result<Vec<String>, CcsError>;
+    /// `read_kits`, with an unreadable file shown as no kits. Only for display:
+    /// never write back what this returns.
+    fn kits(&self, name: &ProfileName) -> Vec<String> {
+        self.read_kits(name).unwrap_or_default()
+    }
     fn set_kits(&self, name: &ProfileName, kits: &[String]) -> Result<(), CcsError>;
 }
 
@@ -65,6 +75,9 @@ pub trait Library {
     fn rename_folder(&self, kind: Kind, folder: &str, name: &str) -> Result<(), CcsError>;
     /// Move an item or folder (`folder/name` or a folder path) to the trash, whole.
     fn trash(&self, kind: Kind, path: &str) -> Result<std::path::PathBuf, CcsError>;
+    /// The skills and agents inside a plugin (ADR-2610281305 R5). Empty for
+    /// anything that is not a plugin.
+    fn plugin_contents(&self, plugin: &LibItem) -> crate::domain::PluginContents;
 }
 
 /// Kits: named picks from the library, built into plugins at launch (ADR-2610261643).
@@ -83,10 +96,15 @@ pub trait KitStore {
     fn set_instructions(&self, kit: &KitName, text: &str) -> Result<(), CcsError>;
     /// The file `ccs kit edit` opens; it may not exist yet.
     fn instructions_file(&self, kit: &KitName) -> std::path::PathBuf;
-    /// Rebuild the kit as a plugin holding exactly `items`. Returns the plugin dir.
+    /// Rebuild the kit as a plugin holding exactly `items`. Returns `build_dir(kit)`.
     fn build(&self, kit: &KitName, items: &[LibItem]) -> Result<std::path::PathBuf, CcsError>;
-    /// Write one launch's joined instructions. Returns the file.
+    /// Write one launch's joined instructions. Returns `prompt_path(kits)`.
     fn write_prompt(&self, kits: &[KitName], text: &str) -> Result<std::path::PathBuf, CcsError>;
+    /// Where `build` puts the kit. Touches nothing, so a launch can be planned
+    /// without building (ADR-2610281305 R2).
+    fn build_dir(&self, kit: &KitName) -> std::path::PathBuf;
+    /// Where `write_prompt` puts these kits' joined instructions. Touches nothing.
+    fn prompt_path(&self, kits: &[KitName]) -> std::path::PathBuf;
 }
 
 /// Gets plugins from git (ADR-2610261643 §15).
@@ -185,6 +203,12 @@ pub trait Browser {
     fn remove_kit(&self, kit: &str) -> Result<std::path::PathBuf, CcsError>;
     fn rename_kit(&self, kit: &str, to: &str) -> Result<(), CcsError>;
     fn kit_uses(&self, kit: &str) -> Result<Vec<Use>, CcsError>;
+    /// Each line of a kit, with what it gives (ADR-2610281305).
+    fn kit_lines(&self, kit: &str) -> Result<Vec<crate::domain::LineGives>, CcsError>;
+    /// What a profile loads: the plan its launch uses. Builds nothing.
+    fn load_plan(&self, profile: &ProfileName) -> Result<crate::domain::LoadPlan, CcsError>;
+    /// The skills and agents inside a library plugin.
+    fn plugin_contents(&self, plugin: &str) -> Result<crate::domain::PluginContents, CcsError>;
     /// Add or remove one line of a kit's `uses`.
     fn set_use(&self, kit: &str, entry: &Use, on: bool) -> Result<(), CcsError>;
     fn kit_instructions(&self, kit: &str) -> Option<String>;

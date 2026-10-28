@@ -246,10 +246,12 @@ fn a_kit_loads_its_plugins_once_after_the_kits() {
 
 #[test]
 fn a_kit_and_a_plugin_with_one_name_warn_at_launch() {
+    // `kit new` refuses a plugin's name (ADR-2610281305 R4); the clash can still
+    // happen the other way round: the kit first, then a plugin by that name.
     let e = Env::new();
-    e.ok(&["library", "add", s(&e.plugin_src("egm", "egm"))]);
     e.ok(&["new", "work"]);
     e.ok(&["kit", "new", "egm"]);
+    e.ok(&["library", "add", s(&e.plugin_src("egm", "egm"))]);
     e.ok(&["kit", "use", "egm", "plugins/egm"]);
     e.ok(&["kit", "attach", "egm", "work"]);
     let out = e.ok(&["work"]);
@@ -278,5 +280,67 @@ fn without_settings(argv: Vec<String>) -> Vec<String> {
     match argv.as_slice() {
         [flag, _, rest @ ..] if flag == "--settings" => rest.to_vec(),
         _ => argv,
+    }
+}
+
+// ── ADR-2610281305 R5: what is inside a plugin, under the names Claude Code shows ──
+
+#[test]
+fn the_name_claude_shows_comes_from_front_matter() {
+    use ccs::domain::front_matter_name;
+    assert_eq!(front_matter_name("---\nname: ml-developer\ndescription: x\n---\nbody").as_deref(), Some("ml-developer"));
+    assert_eq!(front_matter_name("---\nname: \"quoted-name\"\n---\n").as_deref(), Some("quoted-name"));
+    assert_eq!(front_matter_name("---\ndescription: no name\n---\n"), None);
+    assert_eq!(front_matter_name("name: not front matter\n"), None);
+    assert_eq!(front_matter_name("---\nname:\n---\n"), None, "an empty name is no name");
+    assert_eq!(front_matter_name("---\n---\nname: after the front matter\n"), None);
+}
+
+/// egm with two skills and three agents; one agent's file name is not its name.
+fn plugin_with_contents(e: &Env) {
+    let d = e.plugin_src("egm", "egm");
+    fs::create_dir_all(d.join("skills/egm_draft")).unwrap();
+    fs::write(d.join("skills/egm_draft/SKILL.md"), "---\nname: egm_draft\ndescription: Draft a design.\n---\n").unwrap();
+    fs::create_dir_all(d.join("agents")).unwrap();
+    fs::write(d.join("agents/zoom_out.md"), "---\nname: egm-zoom-out\ndescription: Simplicity reviewer.\n---\n").unwrap();
+    fs::write(d.join("agents/style.md"), "---\nname: egm-style\ndescription: Writing reviewer.\n---\n").unwrap();
+    fs::write(d.join("agents/data-ml-model.md"), "---\nname: ml-developer\n---\n").unwrap();
+    e.ok(&["library", "add", s(&d)]);
+}
+
+#[test]
+fn a_plugin_lists_its_skills_and_agents_by_the_names_claude_shows() {
+    use ccs::ports::Library as _;
+    let e = Env::new();
+    plugin_with_contents(&e);
+    let lib = ccs::library(&e.home());
+    let egm = lib.items(Kind::Plugin).into_iter().find(|p| p.name == "egm").expect("egm is in the library");
+    let c = lib.plugin_contents(&egm);
+    let skills: Vec<(&str, Option<&str>)> = c.skills.iter().map(|p| (p.file.as_str(), p.description.as_deref())).collect();
+    assert_eq!(skills, [("egm_draft", Some("Draft a design.")), ("egm_review", None)]);
+    let agents: Vec<(&str, Option<&str>)> = c.agents.iter().map(|p| (p.file.as_str(), p.shown_name.as_deref())).collect();
+    assert_eq!(agents, [("data-ml-model", Some("ml-developer")), ("style", Some("egm-style")), ("zoom_out", Some("egm-zoom-out"))]);
+}
+
+#[test]
+fn a_library_agent_carries_the_name_claude_shows() {
+    use ccs::ports::Library as _;
+    let e = Env::new();
+    let src = e.root.join("src/data-ml-model.md");
+    fs::create_dir_all(src.parent().unwrap()).unwrap();
+    fs::write(&src, "---\nname: ml-developer\ndescription: Builds models.\n---\n").unwrap();
+    e.ok(&["library", "add", s(&src)]);
+    let a = ccs::library(&e.home()).items(Kind::Agent).into_iter().find(|a| a.name == "data-ml-model").expect("added");
+    assert_eq!(a.shown_name.as_deref(), Some("ml-developer"));
+    assert_eq!(a.description.as_deref(), Some("Builds models."));
+}
+
+#[test]
+fn library_show_on_a_plugin_lists_what_is_inside() {
+    let e = Env::new();
+    plugin_with_contents(&e);
+    let out = e.ok(&["library", "show", "plugins/egm"]);
+    for want in ["Goldfish reviews", "SKILLS (2)", "egm_draft", "Draft a design.", "AGENTS (3)", "data-ml-model", "shown as ml-developer"] {
+        assert!(out.contains(want), "{want:?} missing from:\n{out}");
     }
 }

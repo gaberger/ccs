@@ -1,0 +1,1013 @@
+<title>ccs TUI prototypes</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+/* Layout: the terminal is the hero; the test card sits beside it and drops below it on narrow screens */
+:root {
+  --bg: #eceff3; --panel: #ffffff; --fg: #18202c; --muted: #576173; --line: #d3d9e2; --accent: #2a64c9; --ok: #1d7f47;
+  /* The terminal keeps one dark look in both themes, like a real terminal window */
+  --t-bg: #0e1318; --t-bar: #151b23; --t-fg: #c6cfd9; --t-dim: #6b7582; --t-head: #e8eef5; --t-sel: #1d3654;
+  --t-acc: #5aa6ff; --t-ok: #43b95b; --t-warn: #d6a02b; --t-bad: #f0574d; --t-plug: #b98cff; --t-col: #141d28;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0b0f14; --panel: #131a22; --fg: #dde4ec; --muted: #8d98a8; --line: #26303c; --accent: #6aa8ff; --ok: #4cc472; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0b0f14; --panel: #131a22; --fg: #dde4ec; --muted: #8d98a8; --line: #26303c; --accent: #6aa8ff; --ok: #4cc472; color-scheme: dark }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px; box-sizing: border-box; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 14px; }
+h1 { font-size: 18px; margin: 0; font-weight: 600; text-wrap: balance; }
+h1 span { font-family: var(--mono); font-weight: 700; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tabs button, .ctl button { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+.tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.tabs button:focus-visible, .ctl button:focus-visible, #term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ctl { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+@media (max-width: 980px) { main { grid-template-columns: minmax(0, 1fr); } }
+.termwrap { min-width: 0; overflow-x: auto; border-radius: 8px; background: var(--t-bg); box-shadow: 0 1px 0 var(--line), 0 8px 24px rgba(10, 20, 35, .18); }
+#term { font-family: var(--mono); color: var(--t-fg); background: var(--t-bg); padding: 10px 12px; line-height: 1.3; white-space: pre;
+  outline: none; cursor: default; user-select: none; width: max-content; }
+#term .ln { height: 1.3em; }
+#term span[data-a] { cursor: pointer; }
+.dim { color: var(--t-dim); } .head { color: var(--t-head); font-weight: 700; } .acc { color: var(--t-acc); }
+.ok { color: var(--t-ok); } .warn { color: var(--t-warn); } .bad { color: var(--t-bad); } .plug { color: var(--t-plug); }
+.bar { background: var(--t-bar); } .sel { background: var(--t-sel); } .colon { background: var(--t-col); }
+.cur { background: var(--t-acc); color: var(--t-bg); font-weight: 700; } .chip { color: var(--t-dim); } .chipon { background: var(--t-acc); color: var(--t-bg); font-weight: 700; }
+.box { background: #1b2430; color: var(--t-head); } .boxsel { background: var(--t-acc); color: var(--t-bg); }
+.focus-hint { font-size: 13px; color: var(--muted); margin: 8px 2px 0; }
+aside { display: grid; gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+.task { margin: 0 0 10px; font-size: 14px; }
+ol.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; font-size: 14px; }
+ol.steps li { display: grid; grid-template-columns: 22px 1fr; align-items: start; }
+ol.steps li .box2 { width: 14px; height: 14px; border: 1.5px solid var(--muted); border-radius: 3px; margin-top: 3px; }
+ol.steps li.done .box2 { background: var(--ok); border-color: var(--ok); }
+ol.steps li.done span:last-child { color: var(--muted); text-decoration: line-through; }
+.stats { display: flex; gap: 18px; margin-top: 12px; font-variant-numeric: tabular-nums; }
+.stats div { display: grid; } .stats b { font-size: 22px; font-family: var(--mono); } .stats small { color: var(--muted); font-size: 12px; }
+.win { margin-top: 10px; color: var(--ok); font-weight: 600; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+td, th { text-align: left; padding: 4px 0; border-bottom: 1px solid var(--line); } th { color: var(--muted); font-weight: 600; }
+.note p { margin: 0 0 8px; font-size: 14px; } .note .verdict { font-size: 13px; color: var(--muted); }
+details { font-size: 13px; color: var(--muted); } details pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; color: var(--fg); margin: 8px 0 0; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header>
+  <h1><span>ccs</span> TUI prototypes</h1>
+  <div class="tabs" role="tablist">
+    <button id="tab1" data-d="1" aria-pressed="true">1 · Kit builder</button>
+    <button id="tab2" data-d="2" aria-pressed="false">2 · Catalog grid</button>
+    <button id="tab3" data-d="3" aria-pressed="false">3 · Profile board</button>
+    <button id="tab4" data-d="4" aria-pressed="false">4 · Profile → kit (new)</button>
+  </div>
+  <div class="ctl">
+    <button id="size">Terminal: 120×36</button>
+    <button id="reset">Start this design again</button>
+  </div>
+</header>
+
+<main>
+  <div>
+    <div class="termwrap"><div id="term" tabindex="0" aria-label="ccs terminal prototype. Click here, then use the keyboard."></div></div>
+    <p class="focus-hint" id="focushint">Click the terminal, then use the keyboard and mouse as you would in a real terminal. Your real library is loaded; nothing on your machine changes.</p>
+  </div>
+  <aside>
+    <section class="card">
+      <h2>The test</h2>
+      <p class="task">Without a help screen: make a kit <b>research</b>, put the <b>egm</b> plugin and two skills from <b>writing/</b> in it, give it to the profile <b>sticksandstrings</b>, then look at everything that profile loads.</p>
+      <ol class="steps" id="steps"></ol>
+      <div class="stats"><div><b id="keys">0</b><small>keys + clicks</small></div><div><b id="secs">0s</b><small>time</small></div></div>
+      <div class="win" id="win" hidden></div>
+    </section>
+    <section class="card">
+      <h2>Your runs</h2>
+      <table><thead><tr><th>Design</th><th>Keys</th><th>Time</th></tr></thead><tbody id="runs"></tbody></table>
+    </section>
+    <section class="card note" id="note"></section>
+  </aside>
+</main>
+
+<script>
+const DATA = __DATA__;
+
+const NOTES = {
+  1: ['<b>Kit builder.</b> Pick a kit at the top. The library is on the left, and the kit you are editing is on the right, with every folder and plugin opened so you see what it really brings. A bar at the bottom totals the kit. <b>l</b> shows what a profile loads.',
+      'Review verdict: recommended, in a cut-down form, with a separate read-only "what loads" view.'],
+  2: ['<b>Catalog grid.</b> Every library item is a row; every kit is a column. A dot in a cell means that kit picks that row. Move with the arrows, press space on a cell. <b>l</b> shows what a profile loads.',
+      'Review verdict: rejected. The two-way cursor makes it easy to pick into the wrong kit, and none of the five jobs needs kits side by side.'],
+  3: ['<b>Profile board.</b> The screen is one profile and everything it loads, grouped by kit. Kits not on the profile wait in a drawer at the bottom. <b>a</b> opens a search to add items to a kit; <b>2</b> opens the library.',
+      'Review verdict: keep one idea from it (offer to attach a new kit to a named profile), not the whole design.'],
+  4: ['<b>Profile → kit.</b> Built from your two notes: choose the profile first, then the kit. Four columns, left to right: <b>1</b> profile, <b>2</b> its kits (other kits below, space puts one on), <b>3</b> what is in the kit, <b>4</b> the library, where space adds. → goes right, ← goes back. On a profile, column 3 shows everything it loads.',
+      'Columns like Finder or ranger. A new kit goes straight onto the profile you are on.'],
+};
+const STEP_TEXT = ['Kit research exists', 'research holds plugin egm', 'research holds 2 skills from writing/', 'sticksandstrings uses research', 'You looked at everything sticksandstrings loads'];
+
+const ITEMS = DATA.items, PLUG = DATA.plugins;
+const KIND = { s: 'skills', a: 'agents', p: 'plugins' };
+const KWORD = { s: 'skill', a: 'agent', p: 'plugin' };
+const clone = o => JSON.parse(JSON.stringify(o));
+
+// ── Library tree ─────────────────────────────────────────────────────────────
+function buildTree() {
+  const roots = [];
+  for (const k of ['s', 'a']) {
+    const top = { t: 'kind', k, key: k, label: k === 's' ? 'SKILLS' : 'AGENTS', children: [], depth: 0 };
+    const folders = {};
+    const get = path => {
+      if (!path) return top;
+      if (folders[path]) return folders[path];
+      const i = path.lastIndexOf('/');
+      const parent = get(i < 0 ? '' : path.slice(0, i));
+      const f = { t: 'folder', k, path, key: k + ':' + path, label: path.slice(i + 1) + '/', children: [], depth: parent.depth + 1 };
+      folders[path] = f; parent.children.push(f); return f;
+    };
+    for (const it of ITEMS.filter(x => x.k === k)) {
+      const f = get(it.f);
+      f.children.push({ t: 'item', k, it, key: k + '::' + it.f + '/' + it.n, label: it.n, depth: f.depth + 1 });
+    }
+    const sort = n => { if (!n.children) return; n.children.sort((a, b) => (a.t === 'folder' ? 0 : 1) - (b.t === 'folder' ? 0 : 1) || a.label.localeCompare(b.label)); n.children.forEach(sort); };
+    sort(top); roots.push(top);
+  }
+  const pt = { t: 'kind', k: 'p', key: 'p', label: 'PLUGINS', children: [], depth: 0 };
+  for (const p of PLUG) {
+    const pn = { t: 'plugin', k: 'p', p, key: 'p:' + p.n, label: p.n, depth: 1, children: [] };
+    for (const s of p.skills) pn.children.push({ t: 'inner', k: 's', p, name: s, key: pn.key + ':s:' + s, label: s, depth: 2 });
+    for (const a of p.agents) pn.children.push({ t: 'inner', k: 'a', p, name: a, key: pn.key + ':a:' + a, label: a, depth: 2 });
+    pt.children.push(pn);
+  }
+  roots.push(pt);
+  return roots;
+}
+const TREE = buildTree();
+const ALLNODES = []; (function walk(ns) { for (const n of ns) { ALLNODES.push(n); if (n.children) walk(n.children); } })(TREE);
+function under(n) {
+  if (n._u) return n._u;
+  const out = [];
+  (function w(x) { if (x.t === 'item' || x.t === 'plugin') { out.push(x); return; } (x.children || []).forEach(w); })(n);
+  return (n._u = out);
+}
+
+// ── Kit lines, as ccs stores them: skills/<name>, skills/<folder>/, plugins/<name> ──
+function parseLine(l) {
+  const m = /^(skills|agents|plugins)\/(.+)$/.exec(l); if (!m) return null;
+  const k = { skills: 's', agents: 'a', plugins: 'p' }[m[1]], rest = m[2];
+  if (rest.endsWith('/')) return { k, folder: rest.slice(0, -1) };
+  if (k === 'p') return { k, plugin: rest };
+  return { k, name: rest };
+}
+function lineFor(n) {
+  if (n.t === 'item') return KIND[n.k] + '/' + n.it.n;
+  if (n.t === 'folder') return KIND[n.k] + '/' + n.path + '/';
+  if (n.t === 'plugin') return 'plugins/' + n.p.n;
+  return null;
+}
+const inFolder = (f, folder) => f === folder || f.startsWith(folder + '/');
+function gives(l) {
+  const p = parseLine(l); if (!p) return { missing: true, items: [] };
+  if (p.plugin !== undefined) { const pl = PLUG.find(x => x.n === p.plugin); return pl ? { plugin: pl, items: [] } : { missing: true, items: [] }; }
+  if (p.folder !== undefined) { const its = ITEMS.filter(i => i.k === p.k && inFolder(i.f, p.folder)); return its.length ? { folder: true, items: its } : { missing: true, items: [] }; }
+  const it = ITEMS.find(i => i.k === p.k && i.n === p.name); return it ? { items: [it] } : { missing: true, items: [] };
+}
+function kitSum(kit) {
+  const seen = new Map(), pl = []; let missing = 0;
+  for (const l of (S.kits[kit] || { uses: [] }).uses) {
+    const g = gives(l);
+    if (g.missing) { missing++; continue; }
+    if (g.plugin) { if (!pl.includes(g.plugin)) pl.push(g.plugin); continue; }
+    for (const it of g.items) seen.set(it.k + it.f + '/' + it.n, it);
+  }
+  const items = [...seen.values()];
+  return { s: items.filter(i => i.k === 's').length, a: items.filter(i => i.k === 'a').length, pl, missing, items };
+}
+function plural(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
+function sumText(sm) {
+  const parts = [plural(sm.s, 'skill'), plural(sm.a, 'agent'), plural(sm.pl.length, 'plugin')];
+  const ins = sm.pl.reduce((a, p) => [a[0] + p.skills.length, a[1] + p.agents.length], [0, 0]);
+  let t = parts.join(' · ');
+  if (sm.pl.length) t += ` (+${ins[0]} skills, ${ins[1]} agents inside)`;
+  if (sm.missing) t += ` · ${sm.missing} missing`;
+  return t;
+}
+function profileLoads(p) {
+  const rows = [], seen = new Set(), pl = []; let missing = 0;
+  for (const kit of S.profiles[p]) {
+    for (const l of S.kits[kit].uses) {
+      const g = gives(l);
+      if (g.missing) { missing++; rows.push({ k: 'x', name: l, kit, line: l }); continue; }
+      if (g.plugin) { if (!pl.includes(g.plugin)) { pl.push(g.plugin); rows.push({ k: 'p', name: g.plugin.n, kit, line: l, p: g.plugin }); } continue; }
+      for (const it of g.items) { const key = it.k + it.f + '/' + it.n; if (seen.has(key)) continue; seen.add(key); rows.push({ k: it.k, name: it.n, kit, line: l }); }
+    }
+  }
+  const s = rows.filter(r => r.k === 's').length, a = rows.filter(r => r.k === 'a').length;
+  return { rows, sm: { s, a, pl, missing } };
+}
+function markOf(kit, n) {
+  const uses = (S.kits[kit] || { uses: [] }).uses;
+  if (n.t === 'item') {
+    if (uses.includes(lineFor(n))) return 'x';
+    if (uses.some(l => { const p = parseLine(l); return p && p.k === n.k && p.folder !== undefined && inFolder(n.it.f, p.folder); })) return '^';
+    return ' ';
+  }
+  if (n.t === 'folder') {
+    if (uses.includes(lineFor(n))) return 'x';
+    if (uses.some(l => { const p = parseLine(l); return p && p.k === n.k && p.folder !== undefined && n.path.startsWith(p.folder + '/'); })) return '^';
+  }
+  if (n.t === 'plugin') return uses.includes(lineFor(n)) ? 'x' : ' ';
+  if (n.t === 'inner') return uses.includes('plugins/' + n.p.n) ? '^' : ' ';
+  const u = under(n), c = u.filter(i => markOf(kit, i) !== ' ').length;
+  return c === 0 ? ' ' : (c === u.length && n.t !== 'kind' ? 'x' : '-');
+}
+const picked = (kit, n) => under(n).filter(i => markOf(kit, i) !== ' ').length;
+function profilesUsing(kit) { return Object.keys(S.profiles).filter(p => S.profiles[p].includes(kit)); }
+
+// ── State ───────────────────────────────────────────────────────────────────
+let S, design = 1, size = 'big', W = 120, H = 36, results = {};
+try { results = JSON.parse(localStorage.getItem('ccs-proto-runs') || '{}'); } catch (e) { results = {}; }
+function reset() {
+  S = {
+    kits: clone(DATA.kits), profiles: clone(DATA.profiles), profile: 'claude-bedrock-gary',
+    steps: [false, false, false, false, false], keys: 0, t0: null, doneAt: null,
+    echo: null, undo: null, input: null, overlay: null, off: {},
+    d1: { kit: 'base', pane: 'lib', lsel: 0, ksel: 0, open: new Set(['s', 'a', 'p']), filter: '', view: 'main' },
+    d2: { row: 0, col: 0, open: new Set(['s', 'a', 'p']), filter: '', view: 'main' },
+    d3: { sel: 0, closed: new Set(), view: 'board', quick: null, lsel: 0, open: new Set(['s', 'a', 'p']), target: null },
+    d4: { col: 0, kit: null, ksel: 0, csel: 0, lsel: 0, open: new Set(['s', 'a', 'p']), filter: '', view: 'main' },
+  };
+}
+function say(t, c) { S.echo = { t, c: c || 'dim' }; }
+function setUses(kit, uses, cmd) { S.undo = { kit, uses: S.kits[kit].uses.slice() }; S.kits[kit].uses = uses; say('✓ ' + cmd + '      u undoes', 'ok'); check(); }
+function toggle(kit, n) {
+  if (!kit || !S.kits[kit]) return say('Choose a kit first, or press n to make one.', 'warn');
+  if (n.t === 'kind') return say('Pick a folder or an item, not a whole kind.', 'warn');
+  if (n.t === 'inner') return say(`${n.label} is inside the plugin ${n.p.n}. Pick ${n.p.n} to load it.`, 'warn');
+  const uses = S.kits[kit].uses, line = lineFor(n);
+  if (uses.includes(line)) return setUses(kit, uses.filter(l => l !== line), `ccs kit drop ${kit} ${line}`);
+  if (markOf(kit, n) === '^') return say(`${n.label} comes with a folder that ${kit} picks. Drop that folder line to change it.`, 'warn');
+  let nu = uses.slice();
+  if (n.t === 'folder') nu = nu.filter(l => { const p = parseLine(l); if (!p || p.k !== n.k) return true;
+    if (p.folder !== undefined) return !p.folder.startsWith(n.path + '/');
+    if (p.name !== undefined) { const it = ITEMS.find(i => i.k === p.k && i.n === p.name); return !(it && inFolder(it.f, n.path)); } return true; });
+  nu.push(line); setUses(kit, nu, `ccs kit use ${kit} ${line}`);
+}
+function newKit(name, after) {
+  if (!/^[a-z][a-z0-9-]*$/.test(name)) return say('A kit name starts with a lowercase letter and uses a-z, 0-9 and -.', 'bad'), false;
+  if (S.kits[name]) return say(`A kit named ${name} exists already.`, 'bad'), false;
+  if (PLUG.some(p => p.n === name)) return say(`${name} is a plugin name. Two plugins would load with one name; choose another.`, 'bad'), false;
+  S.kits[name] = { uses: [], md: false }; say('✓ ccs kit new ' + name, 'ok'); check(); if (after) after(name); return true;
+}
+function attach(kit, prof, on) {
+  const l = S.profiles[prof], has = l.includes(kit);
+  if (on === undefined) on = !has;
+  if (on && !has) { l.push(kit); say(`✓ ccs kit attach ${kit} ${prof}`, 'ok'); }
+  if (!on && has) { S.profiles[prof] = l.filter(k => k !== kit); say(`✓ ccs kit detach ${kit} ${prof}`, 'ok'); }
+  check();
+}
+function check() {
+  const k = S.kits.research, st = S.steps;
+  st[0] = !!k;
+  st[1] = !!k && k.uses.includes('plugins/egm');
+  st[2] = !!k && kitSum('research').items.filter(i => i.k === 's' && inFolder(i.f, 'writing')).length >= 2;
+  st[3] = !!k && S.profiles.sticksandstrings.includes('research');
+  if (!(st[0] && st[1] && st[2] && st[3])) st[4] = false;
+}
+function sawLoads(p) { if (p === 'sticksandstrings' && S.steps.slice(0, 4).every(Boolean)) S.steps[4] = true; }
+function finish() {
+  if (S.steps.every(Boolean) && !S.doneAt) {
+    S.doneAt = Date.now();
+    const secs = Math.round((S.doneAt - (S.t0 || S.doneAt)) / 1000);
+    const prev = results[design];
+    if (!prev || S.keys < prev.keys) results[design] = { keys: S.keys, secs };
+    try { localStorage.setItem('ccs-proto-runs', JSON.stringify(results)); } catch (e) {}
+  }
+}
+
+// ── Text lines: arrays of [text, class, action] segments ──────────────────────
+let ACTS = [];
+const act = fn => (ACTS.push(fn), ACTS.length - 1);
+const sg = (t, c, a) => [t, c || '', a === undefined ? null : a];
+const chars = s => [...s];
+function lenOf(line) { return line.reduce((n, s) => n + chars(s[0]).length, 0); }
+function fit(line, w) {
+  const out = []; let n = 0;
+  for (const s of line) {
+    const ch = chars(s[0]);
+    if (n + ch.length > w) { const take = w - n; if (take > 0) out.push([ch.slice(0, take - 1).join('') + '…', s[1], s[2]]); n = w; break; }
+    out.push(s); n += ch.length;
+  }
+  if (n < w) out.push([' '.repeat(w - n), '', null]);
+  return out;
+}
+function paint(line, cls, a) { return line.map(s => [s[0], (s[1] + ' ' + cls).trim(), a !== undefined && s[2] === null ? a : s[2]]); }
+function cut(line, a, b) {
+  const out = []; let n = 0;
+  for (const s of line) { const ch = chars(s[0]), s0 = n, s1 = n + ch.length; n = s1; const lo = Math.max(a, s0), hi = Math.min(b, s1); if (lo < hi) out.push([ch.slice(lo - s0, hi - s0).join(''), s[1], s[2]]); }
+  return out;
+}
+function rule(w, label, cls) { const l = label ? '─ ' + label + ' ' : ''; return [sg(l + '─'.repeat(Math.max(0, w - chars(l).length)), cls || 'dim')]; }
+function win(rows, sel, h, key) {
+  let off = S.off[key] || 0;
+  if (sel < off) off = sel; if (sel >= off + h) off = sel - h + 1;
+  off = Math.max(0, Math.min(off, Math.max(0, rows.length - h))); S.off[key] = off;
+  return { rows: rows.slice(off, off + h), off };
+}
+function rpad(s, w) { const c = chars(s); return c.length >= w ? c.slice(0, w).join('') : s + ' '.repeat(w - c.length); }
+function both(left, right, w) { const r = lenOf(right); return [...fit(left, Math.max(0, w - r)), ...right]; }
+const MARK1 = { x: ['[x]', 'ok'], '^': ['[^]', 'acc'], '-': ['[-]', 'warn'], ' ': ['[ ]', 'dim'] };
+const MARK2 = { x: ['●', 'ok'], '^': ['○', 'acc'], '-': ['◐', 'warn'], ' ': ['·', 'dim'] };
+// A match on the name ranks above a match on the path, and both above a match on the description.
+function score(n, q) {
+  const ws = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const name = n.label.replace(/\/$/, '').toLowerCase(), path = (KIND[n.k] + '/' + (n.path || (n.it ? n.it.f : '')) + '/' + name).toLowerCase(), desc = (descOf(n) || '').toLowerCase();
+  let total = 0;
+  for (const w of ws) {
+    const s = name === w ? 0 : name.startsWith(w) ? 1 : name.includes(w) ? 2 : path.includes(w) ? 3 : desc.includes(w) ? 5 : -1;
+    if (s < 0) return -1; total += s;
+  }
+  return total * 4 + { plugin: 0, folder: 1, item: 2, inner: 3 }[n.t];
+}
+function ranked(q, types) {
+  return ALLNODES.filter(n => types.includes(n.t)).map(n => [n, score(n, q)]).filter(x => x[1] >= 0).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+}
+function visible(open, filter) {
+  const out = [];
+  if (filter) return ranked(filter, ['plugin', 'folder', 'item', 'inner']);
+  (function w(ns) { for (const n of ns) { out.push(n); if (n.children && open.has(n.key)) w(n.children); } })(TREE);
+  return out;
+}
+const arrow = (n, open) => n.children && n.children.length ? (open.has(n.key) ? '▾ ' : '▸ ') : '  ';
+function countLabel(n) {
+  if (n.t === 'kind') return n.k === 'p' ? plural(n.children.length, 'plugin') : String(under(n).length);
+  if (n.t === 'folder') return String(under(n).length);
+  if (n.t === 'plugin') return `${n.p.skills.length} skills, ${n.p.agents.length} agents inside`;
+  return '';
+}
+function descOf(n) { return n.t === 'item' ? n.it.d : n.t === 'plugin' ? n.p.d : n.t === 'inner' ? `inside ${n.p.n}` : ''; }
+
+// ── Overlays: a centred box drawn over the screen ─────────────────────────────
+function boxOver(lines, title, body, foot) {
+  const bw = Math.min(W - 6, Math.max(44, ...body.map(lenOf).map(n => n + 4), chars(title).length + 6));
+  const rows = [paint(fit([sg(' ' + title, 'head')], bw), 'box'), paint(fit([], bw), 'box')];
+  for (const b of body) rows.push(paint(fit([sg('  '), ...b], bw), 'box'));
+  rows.push(paint(fit([], bw), 'box'));
+  if (foot) rows.push(paint(fit([sg(' ' + foot, 'dim')], bw), 'box'));
+  const x = Math.floor((W - bw) / 2), y = Math.max(1, Math.floor((H - rows.length) / 2));
+  rows.forEach((r, i) => { const L = lines[y + i]; if (L) lines[y + i] = [...cut(L, 0, x), ...r, ...cut(L, x + bw, W)]; });
+}
+function drawInput(lines) {
+  const I = S.input; if (!I) return;
+  boxOver(lines, I.label, [[sg('> ', 'acc'), sg(I.val, 'head'), sg('▌', 'acc')], ...(I.note ? [[sg(I.note(), 'dim')]] : [])], 'enter accepts · esc cancels');
+}
+function drawOverlay(lines) {
+  const O = S.overlay; if (!O) return;
+  const body = O.rows.map((r, i) => { const t = [sg(r.check ? (r.check() ? '[x] ' : '[ ] ') : '  ', r.check && r.check() ? 'ok' : 'dim'), sg(r.text)];
+    return i === O.sel ? paint(t, 'boxsel', act(() => { O.sel = i; r.on(); })) : paint(t, '', act(() => { O.sel = i; r.on(); })); });
+  boxOver(lines, O.title, body, O.foot);
+}
+function inputKey(k) {
+  const I = S.input;
+  if (k === 'esc') { S.input = null; I.cancel && I.cancel(); return; }
+  if (k === 'enter') { const v = I.val.trim(); const keep = I.done(v) === false; if (!keep) S.input = null; return; }
+  if (k === 'bs') I.val = chars(I.val).slice(0, -1).join('');
+  else if (k.length === 1) I.val += k;
+  I.change && I.change(I.val);
+}
+function overlayKey(k) {
+  const O = S.overlay;
+  if (k === 'esc' || (k === 'enter' && O.closeOnEnter !== false && O.rows[O.sel] && O.rows[O.sel].check)) { S.overlay = null; return; }
+  if (k === 'up') O.sel = Math.max(0, O.sel - 1);
+  else if (k === 'down') O.sel = Math.min(O.rows.length - 1, O.sel + 1);
+  else if (k === 'space' || k === 'enter') O.rows[O.sel].on();
+}
+function chooseProfile(then) {
+  const names = Object.keys(S.profiles);
+  S.overlay = { title: 'Choose a profile', sel: Math.max(0, names.indexOf(S.profile)), foot: '↑↓ move · enter chooses · esc closes',
+    rows: names.map(p => ({ text: `${rpad(p, 22)} ${S.profiles[p].length ? 'kits: ' + S.profiles[p].join(' ') : 'no kits'}`, on: () => { S.profile = p; S.overlay = null; then && then(); } })) };
+}
+function attachOverlay(kit) {
+  const names = Object.keys(S.profiles);
+  S.overlay = { title: `Which profiles start with ${kit}?`, sel: Math.max(0, names.indexOf(S.profile)), foot: '↑↓ move · space switches · enter or esc closes',
+    rows: names.map(p => ({ text: p, check: () => S.profiles[p].includes(kit), on: () => attach(kit, p) })) };
+}
+
+// ── The "what this profile loads" view, shared by designs 1 and 2 ─────────────
+function loadsView(lines, back) {
+  const p = S.profile, L = profileLoads(p);
+  sawLoads(p);
+  lines.push(paint(fit([sg(' WHAT ', 'head'), sg(p, 'acc'), sg(' LOADS', 'head'), sg('   kits: ' + (S.profiles[p].join(' ') || 'none'), 'dim')], W), 'bar'));
+  lines.push(fit([sg(' ' + sumText(L.sm), 'head')], W));
+  lines.push(rule(W));
+  const body = [];
+  if (!L.rows.length) body.push([sg('  Nothing from the library. Attach a kit to this profile: ', 'dim'), sg(back === 1 ? 'esc, choose a kit, then a' : 'esc, go to the kit column, then a', 'acc')]);
+  for (const [k, title] of [['s', 'SKILLS'], ['a', 'AGENTS'], ['p', 'PLUGINS'], ['x', 'MISSING']]) {
+    const rs = L.rows.filter(r => r.k === k); if (!rs.length) continue;
+    body.push([sg(`  ${title}  ${rs.length}`, k === 'x' ? 'bad' : 'head')]);
+    for (const r of rs) {
+      const nm = k === 'p' ? r.name + `   ${r.p.skills.length} skills, ${r.p.agents.length} agents inside` : r.name;
+      body.push([sg('    ' + rpad(nm, Math.min(52, W - 50)), k === 'p' ? 'plug' : k === 'x' ? 'bad' : ''), sg(rpad(k === 'p' || k === 'x' ? '' : r.kit + ':' + r.name, 34), 'dim'), sg('from ' + r.kit + '  ' + r.line, 'dim')]);
+    }
+  }
+  const h = H - 6, v = win(body, 0, h, 'loads');
+  for (let i = 0; i < h; i++) lines.push(fit(v.rows[i] || [], W));
+  const dirs = S.profiles[p].map(k => '--plugin-dir ~/.claude-profiles/.build/' + k).concat(L.sm.pl.map(x => '--plugin-dir ~/.claude-profiles/library/plugins/' + x.n));
+  lines.push(fit([sg(' claude ' + (dirs.join(' ') || '(no plugin dirs)'), 'dim')], W));
+  lines.push(paint(fit([sg(' esc', 'acc'), sg(' back   '), sg('p', 'acc'), sg(' another profile')], W), 'bar'));
+}
+
+// ── Design 1: kit builder ─────────────────────────────────────────────────────
+function d1Render(lines) {
+  const D = S.d1;
+  if (D.view === 'load') return loadsView(lines, 1);
+  const kits = Object.keys(S.kits), kit = D.kit;
+  lines.push(paint(both([sg(' ccs ', 'head'), sg(' profile '), sg(S.profile, 'acc', act(() => chooseProfile())), sg('   starts with: ' + (S.profiles[S.profile].join(' ') || 'no kits'), 'dim')], [sg('p change profile ', 'dim')], W), 'bar'));
+  const chips = [sg(' KIT ', 'head')];
+  for (const k of kits) { chips.push(sg(' ')); chips.push(sg(' ' + k + ' ', k === kit ? 'chipon' : 'chip', act(() => { D.kit = k; D.ksel = 0; }))); }
+  chips.push(sg('   '), sg('+ new kit (n)', 'acc', act(() => d1Key('n'))));
+  lines.push(fit(chips, W));
+  const lw = W >= 110 ? Math.floor(W * 0.56) : Math.floor(W * 0.54), rw = W - lw - 1, h = H - 8;
+  const sm = kitSum(kit);
+  const ltitle = D.filter ? `LIBRARY · finding "${D.filter}"` : 'LIBRARY · / finds';
+  lines.push([...rule(lw, ltitle, D.pane === 'lib' ? 'acc' : 'dim'), sg('┬', 'dim'), ...rule(rw, `KIT ${kit} · ${S.kits[kit].uses.length} lines`, D.pane === 'kit' ? 'acc' : 'dim')]);
+  // left
+  const vis = visible(D.open, D.filter); D.lsel = Math.min(D.lsel, Math.max(0, vis.length - 1));
+  const lrows = vis.map((n, i) => {
+    const m = markOf(kit, n), mk = n.t === 'kind' ? ['   ', ''] : n.t === 'inner' ? (m === '^' ? ['[^]', 'acc'] : [' · ', 'dim']) : MARK1[m];
+    const ind = D.filter ? '' : '  '.repeat(n.depth);
+    const label = D.filter && n.t === 'item' ? n.it.f + '/' + n.label : n.label;
+    const cls = n.t === 'kind' ? 'head' : n.t === 'plugin' ? 'plug' : n.t === 'inner' ? 'dim' : '';
+    const right = n.t === 'kind' || n.t === 'folder' ? `${picked(kit, n)}/${under(n).length} ` : '';
+    const a = act(() => { D.pane = 'lib'; D.lsel = i; });
+    let row = both([sg(' ' + ind + (D.filter ? '' : arrow(n, D.open)), 'dim', act(() => { D.lsel = i; d1Open(n); })), sg(mk[0], mk[1], act(() => { D.lsel = i; toggle(kit, n); })), sg(' ' + label + ' ', cls), sg(n.t === 'plugin' || n.t === 'kind' ? countLabel(n) : descOf(n) || '', 'dim')], [sg(right, 'dim')], lw);
+    row = row.map(s => [s[0], s[1], s[2] === null ? a : s[2]]);
+    return i === D.lsel && D.pane === 'lib' ? paint(row, 'sel') : row;
+  });
+  const L = win(lrows, D.lsel, h, 'd1l');
+  // right
+  const krows = [], heads = [];
+  if (!S.kits[kit].uses.length) {
+    krows.push([sg(` ${kit} is empty.`, 'head')], [], [sg(' Pick from the library on the left:', 'dim')], [sg('   ↑↓ move · space picks · enter opens a folder', 'acc')], [sg('   / finds by name', 'acc')]);
+    if (!profilesUsing(kit).length) krows.push([], [sg(` No profile starts with ${kit} yet: `, 'dim'), sg('a', 'acc'), sg(' attaches it.', 'dim')]);
+  }
+  S.kits[kit].uses.forEach((l, i) => {
+    const g = gives(l), p = parseLine(l) || {};
+    heads.push(krows.length);
+    const hi = heads.length - 1;
+    const sel = D.pane === 'kit' && D.ksel === hi;
+    const a = act(() => { D.pane = 'kit'; D.ksel = hi; });
+    let row;
+    if (g.missing) row = [sg(' ✗ ' + l, 'bad', a), sg('  not in the library', 'bad', a)];
+    else if (g.plugin) row = [sg(' ◆ ' + l, 'plug', a), sg(`  plugin · ${g.plugin.skills.length} skills, ${g.plugin.agents.length} agents inside`, 'dim', a)];
+    else if (g.folder) row = [sg(' ▣ ' + l, 'head', a), sg(`  folder · ${plural(g.items.length, KWORD[p.k])}, new ones join`, 'dim', a)];
+    else row = [sg(' • ' + l, '', a), sg('  ' + KWORD[p.k], 'dim', a)];
+    krows.push(sel ? paint(row, 'sel') : row);
+    if (g.plugin) krows.push([sg('     ' + [...g.plugin.skills, ...g.plugin.agents].join(', '), 'dim', a)]);
+    if (g.folder) for (const it of g.items) krows.push([sg('     ' + it.n, 'dim', a)]);
+  });
+  const ksel = D.pane === 'kit' && heads.length ? heads[Math.min(D.ksel, heads.length - 1)] : 0;
+  const R = win(krows, ksel, h, 'd1r');
+  for (let i = 0; i < h; i++) lines.push([...fit(L.rows[i] || [], lw), sg('│', 'dim'), ...fit(R.rows[i] || [], rw)]);
+  lines.push([...rule(lw, '', 'dim'), sg('┴', 'dim'), ...rule(rw, '', 'dim')]);
+  lines.push(...strip(D.pane === 'lib' ? vis[D.lsel] : null, W));
+  const on = profilesUsing(kit);
+  lines.push(paint(both([sg(' ' + kit, 'acc'), sg(': ' + sumText(sm)), sg('   on profiles: ', 'dim'), sg(on.join(' ') || 'none', on.length ? '' : 'warn')],
+    [sg('a', 'acc', act(() => d1Key('a'))), sg(' attach  '), sg('l', 'acc', act(() => d1Key('l'))), sg(' what a profile loads ')], W), 'bar'));
+  lines.push(fit(d1Hint(vis, kit), W));
+}
+function d1Hint(vis, kit) {
+  const D = S.d1;
+  if (S.echo) return [sg(' ' + S.echo.t, S.echo.c)];
+  if (D.pane === 'lib') {
+    const n = vis[D.lsel]; if (!n) return [sg(' / finds · tab kit pane', 'dim')];
+    const m = markOf(kit, n), line = lineFor(n);
+    const verb = n.t === 'kind' ? 'enter opens' : n.t === 'inner' ? `inside plugin ${n.p.n}` : m === '^' ? 'comes with a picked folder' : line && S.kits[kit].uses.includes(line) ? `space drops ${line} from ${kit}` : `space adds ${line} to ${kit}`;
+    return [sg(' ' + verb, 'acc'), sg('  ·  enter opens  ·  tab kit pane  ·  [ ] other kit  ·  n new kit  ·  / find', 'dim')];
+  }
+  const l = S.kits[kit].uses[D.ksel];
+  return l ? [sg(` space drops ${l} from ${kit}`, 'acc'), sg('  ·  tab library  ·  [ ] other kit', 'dim')] : [sg(' tab library', 'dim')];
+}
+function d1Open(n) { const D = S.d1; if (n.children && n.children.length) { D.open.has(n.key) ? D.open.delete(n.key) : D.open.add(n.key); } }
+function d1Key(k) {
+  const D = S.d1, kits = Object.keys(S.kits);
+  if (D.view === 'load') { if (k === 'esc' || k === 'l' || k === 'q') D.view = 'main'; else if (k === 'p') chooseProfile(); else if (k === 'up' || k === 'down') S.off.loads = Math.max(0, (S.off.loads || 0) + (k === 'up' ? -1 : 1)); return; }
+  const vis = visible(D.open, D.filter);
+  if (k === 'tab') D.pane = D.pane === 'lib' ? 'kit' : 'lib';
+  else if (k === 'up') D.pane === 'lib' ? D.lsel = Math.max(0, D.lsel - 1) : D.ksel = Math.max(0, D.ksel - 1);
+  else if (k === 'down') D.pane === 'lib' ? D.lsel = Math.min(vis.length - 1, D.lsel + 1) : D.ksel = Math.min(Math.max(0, S.kits[D.kit].uses.length - 1), D.ksel + 1);
+  else if (k === 'right' || k === 'enter') { const n = vis[D.lsel]; if (D.pane === 'lib' && n) { if (n.children && n.children.length && !D.open.has(n.key)) D.open.add(n.key); else if (k === 'enter' && n.t !== 'kind') toggle(D.kit, n); } }
+  else if (k === 'left') { const n = vis[D.lsel]; if (D.pane === 'lib' && n) { if (D.open.has(n.key)) D.open.delete(n.key); else { const pi = vis.findIndex(x => x.children && x.children.includes(n)); if (pi >= 0) D.lsel = pi; } } }
+  else if (k === 'space') { if (D.pane === 'lib') { const n = vis[D.lsel]; n && toggle(D.kit, n); } else { const l = S.kits[D.kit].uses[D.ksel]; if (l) { setUses(D.kit, S.kits[D.kit].uses.filter(x => x !== l), `ccs kit drop ${D.kit} ${l}`); D.ksel = Math.max(0, D.ksel - 1); } } }
+  else if (k === '[' || k === ']') { const i = kits.indexOf(D.kit); D.kit = kits[(i + (k === ']' ? 1 : kits.length - 1)) % kits.length]; D.ksel = 0; }
+  else if (k === 'n') S.input = { label: 'Name the new kit', val: '', done: v => newKit(v, nm => { D.kit = nm; D.pane = 'lib'; D.ksel = 0; }) };
+  else if (k === 'a') attachOverlay(D.kit);
+  else if (k === 'p') chooseProfile();
+  else if (k === 'l') { D.view = 'load'; S.off.loads = 0; }
+  else if (k === '/') { S.input = { label: 'Find in the library', val: D.filter, change: v => { D.filter = v; D.lsel = 0; }, done: () => {}, cancel: () => { D.filter = ''; } }; }
+  else if (k === 'esc') { if (D.filter) D.filter = ''; }
+  else if (k === 'u') undo();
+  else if (k === 'v' && D.pane === 'lib') viewNode(vis[D.lsel]);
+}
+
+// ── Design 2: catalog grid ────────────────────────────────────────────────────
+function d2Render(lines) {
+  const D = S.d2;
+  if (D.view === 'load') return loadsView(lines, 2);
+  const kits = Object.keys(S.kits), prof = S.profile, on = S.profiles[prof];
+  D.col = Math.min(D.col, kits.length - 1);
+  const nw = W >= 110 ? 44 : 28, avail = W - nw - 7, cw = Math.max(3, Math.min(9, Math.floor(avail / kits.length)));
+  lines.push(paint(both([sg(' PROFILE ', 'head'), sg('◂ ', 'acc', act(() => d2Key('['))), sg(prof, 'acc', act(() => chooseProfile())), sg(' ▸', 'acc', act(() => d2Key(']'))), sg('   starts with: ' + (on.join(' ') || 'no kits'), 'dim')],
+    [sg('p', 'acc'), sg(' switch  '), sg('a', 'acc'), sg(' attach kit  '), sg('l', 'acc', act(() => d2Key('l'))), sg(' loads ')], W), 'bar'));
+  const hdr = [sg(rpad(D.filter ? ` finding "${D.filter}"` : ' / finds', nw), 'dim')];
+  kits.forEach((k, ci) => { const nm = rpad((on.includes(k) ? '◆' : ' ') + k, cw - 1) + ' '; hdr.push(sg(nm, ci === D.col ? 'chipon' : on.includes(k) ? 'acc' : 'dim', act(() => { D.col = ci; }))); });
+  hdr.push(sg(' +new ', 'acc', act(() => d2Key('n'))));
+  lines.push(fit(hdr, W));
+  lines.push(rule(W));
+  const vis = visible(D.open, D.filter); D.row = Math.min(D.row, Math.max(0, vis.length - 1));
+  const h = H - 7;
+  const rows = vis.map((n, ri) => {
+    const ind = D.filter ? '' : '  '.repeat(n.depth);
+    const label = D.filter && n.t === 'item' ? n.it.f + '/' + n.label : n.label;
+    const cls = n.t === 'kind' ? 'head' : n.t === 'plugin' ? 'plug' : n.t === 'inner' ? 'dim' : '';
+    const cnt = n.t === 'folder' || n.t === 'kind' ? ' ' + countLabel(n).replace(/ inside$/, '') : '';
+    const row = [...fit([sg(' ' + ind + (D.filter ? '' : arrow(n, D.open)), 'dim', act(() => { D.row = ri; d2Open(n); })), sg(label, cls, act(() => { D.row = ri; })), sg(cnt, 'dim')], nw)];
+    kits.forEach((k, ci) => {
+      const m = markOf(k, n), mk = n.t === 'kind' ? [' ', ''] : MARK2[m];
+      const cell = rpad(' '.repeat(Math.floor((cw - 1) / 2)) + mk[0], cw);
+      const cur = ri === D.row && ci === D.col;
+      row.push(sg(cell, cur ? 'cur' : (mk[1] + (ci === D.col || ri === D.row ? ' colon' : '')).trim(), act(() => { D.row = ri; D.col = ci; toggle(k, n); })));
+    });
+    return row;
+  });
+  const V = win(rows, D.row, h, 'd2');
+  for (let i = 0; i < h; i++) lines.push(fit(V.rows[i] || [], W));
+  const n = vis[D.row], kit = kits[D.col];
+  const m = n ? markOf(kit, n) : ' ';
+  const words = { x: 'picked by its own line', '^': 'comes with a folder or plugin it picks', '-': 'partly picked', ' ': 'not picked' }[m];
+  lines.push(paint(fit(n ? [sg(' ' + (n.t === 'item' ? KIND[n.k] + '/' + n.it.f + '/' + n.label : n.label), 'head'), sg('  ·  in ', 'dim'), sg(kit, 'acc'), sg(': ' + words, 'dim'), sg('  ·  ' + (descOf(n) || ''), 'dim')] : [], W), 'bar'));
+  lines.push(fit(d2Hint(n, kit, m), W));
+}
+function d2Hint(n, kit, m) {
+  if (S.echo) return [sg(' ' + S.echo.t, S.echo.c)];
+  if (!n) return [];
+  const line = lineFor(n);
+  const verb = n.t === 'kind' ? 'enter opens' : n.t === 'inner' ? `inside plugin ${n.p.n}` : m === '^' ? 'comes with a picked folder' : line && S.kits[kit].uses.includes(line) ? `space drops it from ${kit}` : `space adds it to ${kit}`;
+  return [sg(' ' + verb, 'acc'), sg(`  ·  v reads it  ·  ←→ kits  ·  enter opens  ·  n new kit  ·  a attaches ${kit} to ${S.profile}`, 'dim')];
+}
+function d2Open(n) { const D = S.d2; if (n.children && n.children.length) { D.open.has(n.key) ? D.open.delete(n.key) : D.open.add(n.key); } }
+function d2Key(k) {
+  const D = S.d2, kits = Object.keys(S.kits);
+  if (D.view === 'load') { if (k === 'esc' || k === 'l' || k === 'q') D.view = 'main'; else if (k === 'p') chooseProfile(); return; }
+  const vis = visible(D.open, D.filter), n = vis[D.row];
+  if (k === 'up') D.row = Math.max(0, D.row - 1);
+  else if (k === 'down') D.row = Math.min(vis.length - 1, D.row + 1);
+  else if (k === 'left') D.col = Math.max(0, D.col - 1);
+  else if (k === 'right' || k === 'tab') D.col = Math.min(kits.length - 1, D.col + 1);
+  else if (k === 'enter') { if (n) d2Open(n); }
+  else if (k === 'space') { if (n) toggle(kits[D.col], n); }
+  else if (k === 'n') S.input = { label: 'Name the new kit (a new column)', val: '', done: v => newKit(v, nm => { D.col = Object.keys(S.kits).indexOf(nm); }) };
+  else if (k === 'a') attach(kits[D.col], S.profile);
+  else if (k === 'p') chooseProfile();
+  else if (k === '[' || k === ']') { const ps = Object.keys(S.profiles), i = ps.indexOf(S.profile); S.profile = ps[(i + 1) % ps.length]; }
+  else if (k === 'l') D.view = 'load';
+  else if (k === 'v') viewNode(n);
+  else if (k === '/') S.input = { label: 'Find in the library', val: D.filter, change: v => { D.filter = v; D.row = 0; }, done: () => {}, cancel: () => { D.filter = ''; } };
+  else if (k === 'esc') { if (D.filter) D.filter = ''; }
+  else if (k === 'u') undo();
+}
+
+// ── Design 3: profile board ───────────────────────────────────────────────────
+function d3Rows() {
+  const D = S.d3, p = S.profile, rows = [];
+  const kitsOn = S.profiles[p];
+  if (!kitsOn.length) rows.push({ t: 'text', line: [sg(`  ${p} loads nothing from the library yet. `, 'warn'), sg('n', 'acc'), sg(' makes a kit for it, or attach one from the list below.', 'dim')] });
+  for (const kit of kitsOn) {
+    const sm = kitSum(kit), others = profilesUsing(kit).filter(x => x !== p);
+    const open = !D.closed.has(kit);
+    rows.push({ t: 'kit', kit, sel: true, line: [sg(open ? ' ▾ ' : ' ▸ ', 'dim'), sg('KIT ' + kit, 'head'), sg('   ' + sumText(sm), 'dim'), sg(others.length ? '   also on: ' + others.join(' ') : '', 'warn')] });
+    if (!open) continue;
+    for (const l of S.kits[kit].uses) {
+      const g = gives(l), pp = parseLine(l) || {};
+      if (g.missing) { rows.push({ t: 'line', kit, l, sel: true, line: [sg('     ✗ ' + l, 'bad'), sg('  not in the library', 'bad')] }); continue; }
+      if (g.plugin) { rows.push({ t: 'line', kit, l, sel: true, line: [sg('     ◆ ' + l, 'plug'), sg(`  plugin · ${g.plugin.skills.length} skills, ${g.plugin.agents.length} agents inside`, 'dim')] });
+        rows.push({ t: 'text', line: [sg('         ◇ ' + [...g.plugin.skills, ...g.plugin.agents].join(', '), 'dim')] }); continue; }
+      if (g.folder) { rows.push({ t: 'line', kit, l, sel: true, line: [sg('     ◉ ' + l, 'head'), sg(`  folder · ${plural(g.items.length, KWORD[pp.k])}, new ones join`, 'dim')] });
+        for (const it of g.items) rows.push({ t: 'text', line: [sg('         ○ ' + it.n, 'dim')] }); continue; }
+      rows.push({ t: 'line', kit, l, sel: true, line: [sg('     ● ' + l), sg('  ' + KWORD[pp.k], 'dim')] });
+    }
+    rows.push({ t: 'add', kit, sel: true, line: [sg(`     + add to ${kit}…`, 'acc')] });
+  }
+  rows.push({ t: 'text', line: [] });
+  rows.push({ t: 'new', sel: true, line: [sg(' + new kit for ' + p + ' (n)', 'acc')] });
+  rows.push({ t: 'text', line: [] });
+  const off = Object.keys(S.kits).filter(k => !kitsOn.includes(k));
+  rows.push({ t: 'text', line: [sg(` KITS NOT ON ${p.toUpperCase()}`, 'head'), sg('   space attaches', 'dim')] });
+  for (const kit of off) rows.push({ t: 'drawer', kit, sel: true, line: [sg('   ' + rpad(kit, 16)), sg(sumText(kitSum(kit)), 'dim'), sg(profilesUsing(kit).length ? '   on: ' + profilesUsing(kit).join(' ') : '', 'dim')] });
+  return rows;
+}
+function d3Render(lines) {
+  const D = S.d3, p = S.profile;
+  if (D.view === 'library') return d3Library(lines);
+  const L = profileLoads(p);
+  lines.push(paint(both([sg(' ccs  ', 'head'), sg('◂ ', 'acc', act(() => d3Key('['))), sg(p, 'acc', act(() => chooseProfile())), sg(' ▸', 'acc', act(() => d3Key(']'))), sg('   [ ] switch profile', 'dim')],
+    [sg('2', 'acc', act(() => d3Key('2'))), sg(' library  '), sg('g', 'acc'), sg(' start claude ')], W), 'bar'));
+  lines.push(fit([sg(' LOADS ', 'head'), sg(plural(S.profiles[p].length, 'kit') + ' · ' + sumText(L.sm), 'head')], W));
+  lines.push(rule(W));
+  const rows = d3Rows(), sels = rows.map((r, i) => r.sel ? i : -1).filter(i => i >= 0);
+  D.sel = Math.min(D.sel, sels.length - 1);
+  const cur = sels[D.sel];
+  const disp = rows.map((r, i) => { const a = r.sel ? act(() => { D.sel = sels.indexOf(i); d3Enter(); }) : null; const ln = r.line.map(s => [s[0], s[1], s[2] === null ? a : s[2]]); return i === cur ? paint(fit(ln, W), 'sel') : ln; });
+  const h = H - 5, V = win(disp, cur, h, 'd3');
+  for (let i = 0; i < h; i++) lines.push(fit(V.rows[i] || [], W));
+  sawLoads(p);
+  lines.push(fit(d3Hint(rows[cur]), W));
+  if (D.quick) d3Quick(lines);
+}
+function d3Hint(r) {
+  if (S.echo) return [sg(' ' + S.echo.t, S.echo.c)];
+  if (!r) return [];
+  const t = { kit: [`enter folds ${r.kit} · space takes ${r.kit} off ${S.profile} · a adds to ${r.kit}`], line: [`space drops ${r.l} from ${r.kit} · a adds to ${r.kit}`], add: [`enter or a: search the library and add to ${r.kit}`], new: ['enter or n: make a kit for this profile'], drawer: [`space attaches ${r.kit} to ${S.profile}`] }[r.t] || [''];
+  return [sg(' ' + t[0], 'acc'), sg('  ·  [ ] profile  ·  2 library  ·  n new kit', 'dim')];
+}
+function d3Cands(q) {
+  const out = [];
+  for (const n of ALLNODES) if (n.t === 'item' || n.t === 'folder' || n.t === 'plugin') out.push(n);
+  if (!q) return out.filter(n => n.t !== 'item').concat(out.filter(n => n.t === 'item'));
+  return ranked(q, ['plugin', 'folder', 'item']);
+}
+function d3Quick(lines) {
+  const Q = S.d3.quick, c = d3Cands(Q.q); Q.sel = Math.min(Q.sel, Math.max(0, c.length - 1));
+  const h = Math.min(14, H - 12), V = win(c, Q.sel, h, 'quick');
+  const body = [[sg('> ', 'acc'), sg(Q.q, 'head'), sg('▌', 'acc'), sg(`   ${c.length} found`, 'dim')], []];
+  V.rows.forEach((n, i) => {
+    const gi = V.off + i, m = markOf(Q.kit, n), mk = { x: '[x] ', '^': '[~] ', '-': '[-] ', ' ': '[ ] ' }[m];
+    const path = n.t === 'item' ? KIND[n.k] + '/' + n.it.f + '/' + n.label : n.t === 'folder' ? KIND[n.k] + '/' + n.path + '/' : 'plugins/' + n.p.n;
+    const kind = n.t === 'folder' ? `folder · ${under(n).length}` : n.t === 'plugin' ? `plugin · ${n.p.skills.length} skills, ${n.p.agents.length} agents` : KWORD[n.k];
+    const row = [sg(mk, m === ' ' ? '' : 'ok'), sg(rpad(path, 46)), sg(kind, 'dim')];
+    body.push(gi === Q.sel ? paint(row, 'boxsel', act(() => { Q.sel = gi; toggle(Q.kit, n); })) : paint(row, '', act(() => { Q.sel = gi; toggle(Q.kit, n); })));
+  });
+  boxOver(lines, `ADD TO ${Q.kit}  ·  type to find`, body, 'space picks · tab reads it · ↑↓ move · enter or esc done');
+}
+function d3Enter() {
+  const D = S.d3, rows = d3Rows(), sels = rows.map((r, i) => r.sel ? i : -1).filter(i => i >= 0), r = rows[sels[D.sel]];
+  if (!r) return;
+  if (r.t === 'kit') D.closed.has(r.kit) ? D.closed.delete(r.kit) : D.closed.add(r.kit);
+  else if (r.t === 'add') { D.quick = { kit: r.kit, q: '', sel: 0 }; S.off.quick = 0; }
+  else if (r.t === 'new') d3Key('n');
+  else if (r.t === 'drawer') attach(r.kit, S.profile, true);
+}
+function d3Key(k) {
+  const D = S.d3;
+  if (D.view === 'library') return d3LibKey(k);
+  if (D.quick) {
+    const Q = D.quick, c = d3Cands(Q.q);
+    if (k === 'esc' || k === 'enter') { D.quick = null; return; }
+    if (k === 'up') Q.sel = Math.max(0, Q.sel - 1); else if (k === 'down') Q.sel = Math.min(c.length - 1, Q.sel + 1);
+    else if (k === 'space') { const n = c[Q.sel]; n && toggle(Q.kit, n); }
+    else if (k === 'tab') viewNode(c[Q.sel]);
+    else if (k === 'bs') { Q.q = chars(Q.q).slice(0, -1).join(''); Q.sel = 0; }
+    else if (k.length === 1) { Q.q += k; Q.sel = 0; S.off.quick = 0; }
+    return;
+  }
+  const rows = d3Rows(), sels = rows.map((r, i) => r.sel ? i : -1).filter(i => i >= 0), r = rows[sels[D.sel]];
+  if (k === 'up') D.sel = Math.max(0, D.sel - 1);
+  else if (k === 'down') D.sel = Math.min(sels.length - 1, D.sel + 1);
+  else if (k === 'enter') d3Enter();
+  else if (k === 'space' && r) {
+    if (r.t === 'drawer') attach(r.kit, S.profile, true);
+    else if (r.t === 'line') setUses(r.kit, S.kits[r.kit].uses.filter(x => x !== r.l), `ccs kit drop ${r.kit} ${r.l}`);
+    else if (r.t === 'kit') attach(r.kit, S.profile, false);
+    else d3Enter();
+  }
+  else if (k === 'a') { const kit = r && r.kit && S.profiles[S.profile].includes(r.kit) ? r.kit : S.profiles[S.profile][0]; if (!kit) say('This profile has no kit to add to. Press n to make one.', 'warn'); else { D.quick = { kit, q: '', sel: 0 }; S.off.quick = 0; } }
+  else if (k === 'n') S.input = { label: `Name the new kit for ${S.profile}`, val: '', done: v => newKit(v, nm => { attach(nm, S.profile, true); say(`✓ ccs kit new ${nm} · ccs kit attach ${nm} ${S.profile}`, 'ok'); const rs = d3Rows(), ss = rs.map((x, i) => x.sel ? i : -1).filter(i => i >= 0); D.sel = ss.findIndex(i => rs[i].t === 'add' && rs[i].kit === nm); D.target = nm; }) };
+  else if (k === '[' || k === ']') { const ps = Object.keys(S.profiles), i = ps.indexOf(S.profile); S.profile = ps[(i + (k === ']' ? 1 : ps.length - 1)) % ps.length]; D.sel = 0; }
+  else if (k === 'p') chooseProfile();
+  else if (k === '2') { D.view = 'library'; }
+  else if (k === 'g') say(`(prototype) ccs ${S.profile} would start claude here`, 'dim');
+  else if (k === 'u') undo();
+}
+function d3Library(lines) {
+  const D = S.d3, p = S.profile;
+  const target = D.target && S.kits[D.target] ? D.target : S.profiles[p][0];
+  lines.push(paint(both([sg(' LIBRARY ', 'head'), sg('  space adds to kit: ', 'dim'), sg(target || 'none (press 1, then n)', target ? 'acc' : 'warn'), sg('   t changes it', 'dim')], [sg('1', 'acc', act(() => d3Key('1'))), sg(' back to ' + p + ' ')], W), 'bar'));
+  const nw = Math.floor(W * 0.5);
+  lines.push(fit([sg(rpad(' ITEM', nw), 'dim'), sg(rpad('IN KITS', Math.floor(W * 0.3)), 'dim'), sg('ON PROFILES', 'dim')], W));
+  lines.push(rule(W));
+  const vis = visible(D.open, ''); D.lsel = Math.min(D.lsel, vis.length - 1);
+  const rows = vis.map((n, i) => {
+    const kits = Object.keys(S.kits).filter(k => n.t !== 'kind' && markOf(k, n) !== ' ');
+    const profs = Object.keys(S.profiles).filter(pp => S.profiles[pp].some(k => kits.includes(k)));
+    const mk = target && n.t !== 'kind' ? MARK1[markOf(target, n)] : ['   ', ''];
+    const row = [...fit([sg(' ' + '  '.repeat(n.depth) + arrow(n, D.open), 'dim', act(() => { D.lsel = i; d3Open(n); })), sg(mk[0] + ' ', mk[1], act(() => { D.lsel = i; target && toggle(target, n); })), sg(n.label, n.t === 'kind' ? 'head' : n.t === 'plugin' ? 'plug' : n.t === 'inner' ? 'dim' : '', act(() => { D.lsel = i; })), sg(' ' + (n.t === 'folder' || n.t === 'kind' || n.t === 'plugin' ? countLabel(n) : ''), 'dim')], nw),
+      ...fit([sg(kits.join(' ') || (n.t === 'kind' ? '' : '—'), kits.length ? 'acc' : 'dim')], Math.floor(W * 0.3)), sg(profs.join(' '), 'dim')];
+    return i === D.lsel ? paint(row, 'sel') : row;
+  });
+  const h = H - 5, V = win(rows, D.lsel, h, 'd3lib');
+  for (let i = 0; i < h; i++) lines.push(fit(V.rows[i] || [], W));
+  lines.push(fit(S.echo ? [sg(' ' + S.echo.t, S.echo.c)] : [sg(` space adds to ${target || '(no kit)'}`, 'acc'), sg('  ·  enter opens  ·  t target kit  ·  1 back', 'dim')], W));
+}
+function d3Open(n) { const D = S.d3; if (n.children && n.children.length) { D.open.has(n.key) ? D.open.delete(n.key) : D.open.add(n.key); } }
+function d3LibKey(k) {
+  const D = S.d3, vis = visible(D.open, ''), n = vis[D.lsel];
+  const target = D.target && S.kits[D.target] ? D.target : S.profiles[S.profile][0];
+  if (k === 'up') D.lsel = Math.max(0, D.lsel - 1);
+  else if (k === 'down') D.lsel = Math.min(vis.length - 1, D.lsel + 1);
+  else if (k === 'enter' || k === 'right') { if (n) d3Open(n); }
+  else if (k === 'left') { if (n && D.open.has(n.key)) D.open.delete(n.key); }
+  else if (k === 'space') { if (n) toggle(target, n); }
+  else if (k === 't') { const ks = Object.keys(S.kits), i = ks.indexOf(target); D.target = ks[(i + 1) % ks.length]; }
+  else if (k === '1' || k === 'esc') D.view = 'board';
+  else if (k === 'v') viewNode(n);
+  else if (k === 'u') undo();
+}
+// ── Design 4: columns, left to right: 1 profile → 2 its kits → 3 what is in the kit → 4 add from the library ──
+function d4KitRows() {
+  const p = S.profile, on = S.profiles[p], rows = [];
+  rows.push({ t: 'hdr', line: [sg(' ON ' + p.toUpperCase(), 'head')] });
+  if (!on.length) rows.push({ t: 'hdr', line: [sg('  none yet', 'dim')] });
+  for (const k of on) rows.push({ t: 'kit', k, on: true, sel: true });
+  rows.push({ t: 'new', sel: true });
+  rows.push({ t: 'hdr', line: [] });
+  rows.push({ t: 'hdr', line: [sg(' OTHER KITS', 'head'), sg('  space puts one on', 'dim')] });
+  for (const k of Object.keys(S.kits).filter(k => !on.includes(k))) rows.push({ t: 'kit', k, on: false, sel: true });
+  return rows;
+}
+const d4Sel = rows => rows.map((r, i) => r.sel ? i : -1).filter(i => i >= 0);
+function d4Hovered() { const D = S.d4, rows = d4KitRows(), s = d4Sel(rows); D.ksel = Math.max(0, Math.min(D.ksel, s.length - 1)); return rows[s[D.ksel]]; }
+function d4Loads(p) {
+  const out = [], L = profileLoads(p);
+  out.push([sg(' ' + sumText(L.sm), 'head')]); out.push([]);
+  if (!S.profiles[p].length) out.push([sg(' Nothing from the library yet.', 'warn')], [], [sg(' → then n makes a kit for it', 'acc')]);
+  for (const kit of S.profiles[p]) {
+    out.push([sg(' KIT ' + kit, 'acc'), sg('  ' + sumText(kitSum(kit)), 'dim')]);
+    for (const r of L.rows.filter(r => r.kit === kit)) out.push([sg('   ' + (r.k === 'p' ? '◆ ' : r.k === 'x' ? '✗ ' : '  ') + r.name, r.k === 'p' ? 'plug' : r.k === 'x' ? 'bad' : ''), sg('  ' + (KWORD[r.k] || 'missing'), 'dim')]);
+    out.push([]);
+  }
+  return out;
+}
+function d4Contents(kit, focus) {
+  const D = S.d4, rows = [], heads = [];
+  if (!S.kits[kit].uses.length) rows.push([sg(` ${kit} is empty.`, 'head')], [], [sg(' → goes to the library,', 'acc')], [sg(' where space adds items.', 'acc')]);
+  S.kits[kit].uses.forEach(l => {
+    const g = gives(l), pp = parseLine(l) || {};
+    heads.push(rows.length); const hi = heads.length - 1;
+    const a = act(() => { D.col = 2; D.csel = hi; });
+    let row;
+    if (g.missing) row = [sg(' ✗ ' + l, 'bad', a)];
+    else if (g.plugin) row = [sg(' ◆ ' + l, 'plug', a), sg(`  ${g.plugin.skills.length} skills, ${g.plugin.agents.length} agents`, 'dim', a)];
+    else if (g.folder) row = [sg(' ▣ ' + l, 'head', a), sg(`  ${plural(g.items.length, KWORD[pp.k])}`, 'dim', a)];
+    else row = [sg(' • ' + l, '', a), sg('  ' + KWORD[pp.k], 'dim', a)];
+    rows.push(focus && D.csel === hi ? paint(row, 'sel') : row);
+    if (g.plugin) for (const x of [...g.plugin.skills, ...g.plugin.agents]) rows.push([sg('     ' + x, 'dim', a)]);
+    if (g.folder) for (const it of g.items) rows.push([sg('     ' + it.n, 'dim', a)]);
+  });
+  return { rows, heads };
+}
+function d4Render(lines) {
+  const D = S.d4, p = S.profile;
+  if (D.view === 'load') return loadsView(lines, 1);
+  const hov = d4Hovered(), kit = D.col >= 2 ? D.kit : (hov && hov.k) || null;
+  const steps = [['1', p], ['2', kit || 'kit'], ['3', kit ? 'in ' + kit : 'contents'], ['4', 'add from library']];
+  const crumb = [sg(' ccs  ', 'head')];
+  steps.forEach(([n, t], i) => { crumb.push(sg(` ${n} ${t} `, i === D.col ? 'chipon' : i < D.col ? 'acc' : 'dim', act(() => { D.col = Math.min(i, kit ? 3 : 1); }))); if (i < 3) crumb.push(sg(' › ', 'dim')); });
+  lines.push(paint(both(crumb, [sg('l', 'acc', act(() => d4Key('l'))), sg(' all it loads ')], W), 'bar'));
+  const others = kit ? profilesUsing(kit).filter(x => x !== p) : [];
+  lines.push(fit(others.length ? [sg(` ${kit} is also on ${others.join(' ')}: a change to it changes that profile too.`, 'warn')] : [sg(' ', 'dim')], W));
+  const h = H - 7;
+  // columns
+  const profs = Object.keys(S.profiles), prow = profs.map((q, i) => {
+    const a = act(() => { D.col = 0; S.profile = q; D.ksel = 0; });
+    const ln = both([sg(q === p ? ' ● ' : ' ○ ', q === p ? 'acc' : 'dim', a), sg(q, q === p ? 'head' : '', a)], [sg(String(S.profiles[q].length) + ' ', 'dim', a)], 999);
+    return ln;
+  });
+  const kr = d4KitRows(), ks = d4Sel(kr);
+  const krow = kr.map((r, i) => {
+    const a = r.sel ? act(() => { D.col = 1; D.ksel = ks.indexOf(i); }) : null;
+    let ln;
+    if (r.t === 'hdr') ln = r.line;
+    else if (r.t === 'kit') ln = [sg(r.on ? ' [x] ' : ' [ ] ', r.on ? 'ok' : 'dim', act(() => { D.col = 1; D.ksel = ks.indexOf(i); attach(r.k, p); })), sg(r.k, '', a), sg('  ' + (kitSum(r.k).s + kitSum(r.k).a + kitSum(r.k).pl.length), 'dim', a)];
+    else ln = [sg(' + new kit for ' + p, 'acc', a)];
+    return ln;
+  });
+  const col3 = D.col === 0 ? d4Loads(p) : kit ? d4Contents(kit, D.col === 2).rows : [[sg(' n makes a kit for ' + p, 'acc')]];
+  const vis = visible(D.open, D.filter); D.lsel = Math.min(D.lsel, Math.max(0, vis.length - 1));
+  const lrow = vis.map((n, i) => {
+    const m = kit ? markOf(kit, n) : ' ', mk = n.t === 'kind' ? ['   ', ''] : n.t === 'inner' ? (m === '^' ? ['[^]', 'acc'] : [' · ', 'dim']) : MARK1[m];
+    const ind = D.filter ? '' : '  '.repeat(n.depth), label = D.filter && n.t === 'item' ? n.it.f + '/' + n.label : n.label;
+    const cls = n.t === 'kind' ? 'head' : n.t === 'plugin' ? 'plug' : n.t === 'inner' ? 'dim' : '';
+    const a = act(() => { if (kit) { D.col = 3; D.kit = kit; } D.lsel = i; });
+    return [sg(' ' + ind + (D.filter ? '' : arrow(n, D.open)), 'dim', act(() => { D.lsel = i; d4Open(n); })), sg(mk[0], mk[1], act(() => { D.lsel = i; if (kit) { D.kit = kit; D.col = 3; toggle(kit, n); } })), sg(' ' + label + ' ', cls, a),
+      sg(n.t === 'kind' || n.t === 'folder' ? (kit ? picked(kit, n) + '/' : '') + under(n).length : n.t === 'plugin' ? countLabel(n) : '', 'dim', a)];
+  });
+  const titles = ['1 PROFILE', `2 KITS FOR ${p}`, D.col === 0 ? `3 ${p} LOADS` : `3 IN ${kit || '…'}`, D.filter ? `4 LIBRARY "${D.filter}"` : '4 ADD FROM LIBRARY  / finds'];
+  const sels = [profs.indexOf(p), ks[D.ksel], D.col === 2 ? (d4Contents(kit || 'base', false).heads[D.csel] || 0) : 0, D.lsel];
+  const data = [prow, krow, col3, lrow];
+  let shown = [0, 1, 2, 3], widths = [20, 26, 32, W - 20 - 26 - 32 - 3];
+  if (W < 110) { shown = D.col <= 1 ? [0, 1, 2] : [1, 2, 3]; widths = D.col <= 1 ? [18, 26, W - 46] : [20, 26, W - 48]; }
+  const wins = shown.map((c, j) => {
+    const rows = data[c].map((ln, i) => (c === D.col && i === sels[c] && c !== 2) ? paint(fit(ln, widths[j]), 'sel') : ln);
+    return win(rows, sels[c] || 0, h, 'd4c' + c);
+  });
+  const head = [];
+  shown.forEach((c, j) => { head.push(...rule(widths[j], titles[c], c === D.col ? 'acc' : 'dim')); if (j < shown.length - 1) head.push(sg('┬', 'dim')); });
+  lines.push(head);
+  for (let i = 0; i < h; i++) { const row = []; shown.forEach((c, j) => { row.push(...fit(wins[j].rows[i] || [], widths[j])); if (j < shown.length - 1) row.push(sg('│', 'dim')); }); lines.push(row); }
+  const foot = []; shown.forEach((c, j) => { foot.push(...rule(widths[j], '', 'dim')); if (j < shown.length - 1) foot.push(sg('┴', 'dim')); }); lines.push(foot);
+  lines.push(...strip(D.col === 3 ? vis[D.lsel] : null, W));
+  if (D.col === 0) sawLoads(p);
+  lines.push(fit(d4Hint(hov, kit, vis), W));
+}
+function d4Hint(hov, kit, vis) {
+  const D = S.d4, p = S.profile;
+  if (S.echo) return [sg(' ' + S.echo.t, S.echo.c)];
+  const back = sg('  ·  ← back  ·  l all ' + p + ' loads', 'dim');
+  if (D.col === 0) return [sg(` → choose ${p}'s kits  ·  ↑↓ another profile`, 'acc'), sg('  ·  column 3 shows everything it loads', 'dim')];
+  if (D.col === 1) {
+    if (!hov) return [back];
+    if (hov.t === 'new') return [sg(` enter or n makes a new kit and puts it on ${p}`, 'acc'), back];
+    return [sg(` → opens ${hov.k}  ·  space ${hov.on ? 'takes it off' : 'puts it on'} ${p}`, 'acc'), sg('  ·  n new kit', 'dim'), back];
+  }
+  if (D.col === 2) { const l = S.kits[kit].uses[D.csel]; return [sg(l ? ` space drops ${l}  ·  → add from the library` : ' → add from the library', 'acc'), back]; }
+  const n = vis[D.lsel]; if (!n) return [back];
+  const m = markOf(kit, n), line = lineFor(n);
+  const verb = n.t === 'kind' ? 'enter opens' : n.t === 'inner' ? `inside plugin ${n.p.n}` : m === '^' ? 'comes with a picked folder' : line && S.kits[kit].uses.includes(line) ? `space drops it from ${kit}` : `space adds it to ${kit}`;
+  return [sg(' ' + verb, 'acc'), sg('  ·  enter opens  ·  v reads it  ·  / finds', 'dim'), back];
+}
+function d4Open(n) { const D = S.d4; if (n.children && n.children.length) { D.open.has(n.key) ? D.open.delete(n.key) : D.open.add(n.key); } }
+function d4Key(k) {
+  const D = S.d4, p = S.profile, profs = Object.keys(S.profiles);
+  if (D.view === 'load') { if (k === 'esc' || k === 'l' || k === 'q') D.view = 'main'; else if (k === 'p') chooseProfile(); return; }
+  const hov = d4Hovered(), vis = visible(D.open, D.filter);
+  const nks = d4Sel(d4KitRows()).length;
+  if (k === 'n') { S.input = { label: `Name the new kit (it goes on ${p})`, val: '', done: v => newKit(v, nm => { attach(nm, p, true); S.undo = { detach: [nm, p] }; D.kit = nm; D.col = 3; D.csel = 0; D.ksel = d4Sel(d4KitRows()).findIndex(i => d4KitRows()[i].k === nm); say(`✓ ccs kit new ${nm} · ccs kit attach ${nm} ${p}      u takes it off ${p}`, 'ok'); }) }; return; }
+  if (k === 'l') { D.view = 'load'; S.off.loads = 0; return; }
+  if (k === 'u') return undo();
+  if (k === '/') { S.input = { label: 'Find in the library', val: D.filter, change: v => { D.filter = v; D.lsel = 0; }, done: () => {}, cancel: () => { D.filter = ''; } }; if (D.col < 3 && (D.kit || (hov && hov.k))) { D.kit = D.kit && D.col >= 2 ? D.kit : hov.k; D.col = 3; } return; }
+  if (D.col === 0) {
+    if (k === 'up' || k === 'down') { const i = profs.indexOf(p); S.profile = profs[Math.max(0, Math.min(profs.length - 1, i + (k === 'up' ? -1 : 1)))]; D.ksel = 0; }
+    else if (k === 'right' || k === 'enter' || k === 'tab' || k === 'space') { D.col = 1; D.ksel = 0; }
+  } else if (D.col === 1) {
+    if (k === 'up') D.ksel = Math.max(0, D.ksel - 1);
+    else if (k === 'down') D.ksel = Math.min(nks - 1, D.ksel + 1);
+    else if (k === 'left' || k === 'esc') D.col = 0;
+    else if (k === 'space') { if (hov && hov.t === 'kit') { attach(hov.k, p); const s = d4Sel(d4KitRows()), rows = d4KitRows(); D.ksel = s.findIndex(i => rows[i].k === hov.k); } else if (hov) d4Key('n'); }
+    else if (k === 'right' || k === 'enter' || k === 'tab') { if (hov && hov.t === 'kit') { D.kit = hov.k; D.col = 2; D.csel = 0; } else if (hov) d4Key('n'); }
+  } else if (D.col === 2) {
+    const n = S.kits[D.kit].uses.length;
+    if (k === 'up') D.csel = Math.max(0, D.csel - 1);
+    else if (k === 'down') D.csel = Math.min(Math.max(0, n - 1), D.csel + 1);
+    else if (k === 'left' || k === 'esc') D.col = 1;
+    else if (k === 'right' || k === 'enter' || k === 'tab') D.col = 3;
+    else if (k === 'space') { const l = S.kits[D.kit].uses[D.csel]; if (l) { setUses(D.kit, S.kits[D.kit].uses.filter(x => x !== l), `ccs kit drop ${D.kit} ${l}`); D.csel = Math.max(0, D.csel - 1); } }
+  } else {
+    const n = vis[D.lsel];
+    if (k === 'up') D.lsel = Math.max(0, D.lsel - 1);
+    else if (k === 'down') D.lsel = Math.min(vis.length - 1, D.lsel + 1);
+    else if (k === 'esc') { if (D.filter) D.filter = ''; else D.col = 2; }
+    else if (k === 'left') { if (n && D.open.has(n.key) && n.t !== 'kind') D.open.delete(n.key); else D.col = 2; }
+    else if (k === 'right' || k === 'enter') { if (n) { if (n.children && n.children.length && !D.open.has(n.key)) D.open.add(n.key); else if (k === 'enter' && n.t !== 'kind') toggle(D.kit, n); } }
+    else if (k === 'space') { if (n) toggle(D.kit, n); }
+    else if (k === 'v') viewNode(n);
+    else if (k === 'tab') D.col = 0;
+  }
+}
+// ── Reading an item: a two-line strip that is always there, and v for the whole text ──
+function wrap(text, w) {
+  const out = []; let cur = '';
+  for (const word of (text || '').split(/\s+/).filter(Boolean)) {
+    if (chars(cur).length + chars(word).length + 1 > w) { if (cur) out.push(cur); cur = word; } else cur = cur ? cur + ' ' + word : word;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+function strip(n, w) {
+  const name = n ? (n.t === 'item' ? KIND[n.k] + '/' + n.it.f + '/' + n.label : n.t === 'folder' ? KIND[n.k] + '/' + n.path + '/' : n.t === 'plugin' ? 'plugins/' + n.p.n : n.t === 'inner' ? n.p.n + ' › ' + n.label : n.label) : '';
+  const d = !n ? '' : n.t === 'folder' ? `Folder of ${under(n).length} ${KIND[n.k]}. Picking it picks them all, and any added later.` : n.t === 'kind' ? '' : n.t === 'inner' ? `Inside the plugin ${n.p.n}. It loads when the kit picks ${n.p.n}.` : descOf(n) || '(no description)';
+  const ws = wrap(d, w - 4);
+  const more = n && n.t !== 'kind' ? '   v reads it all' : '';
+  return [
+    paint(fit([sg(' ' + name, 'head'), sg('  ' + (ws[0] || ''), ''), sg(ws.length > 1 ? '' : more, 'acc')], w), 'bar'),
+    paint(fit([sg('   ' + (ws.slice(1).join(' ')), 'dim'), sg(ws.length > 1 ? more : '', 'acc')], w), 'bar'),
+  ];
+}
+function viewNode(n) {
+  if (!n || n.t === 'kind') return;
+  let title, body = [];
+  if (n.t === 'item') { title = `${KIND[n.k]}/${n.it.f}/${n.label}`; body = [...wrap(n.it.d, W - 14).map(x => [sg(x, 'acc')]), [], ...(n.it.b || []).map(x => [sg(x)])]; }
+  else if (n.t === 'plugin') { title = 'plugins/' + n.p.n; body = [...wrap(n.p.d, W - 14).map(x => [sg(x, 'acc')]), [], [sg(`SKILLS (${n.p.skills.length})`, 'head')], ...n.p.skills.map(x => [sg('  ' + x)]), [], [sg(`AGENTS (${n.p.agents.length})`, 'head')], ...n.p.agents.map(x => [sg('  ' + x)])]; }
+  else if (n.t === 'folder') { title = `${KIND[n.k]}/${n.path}/`; body = under(n).map(i => [sg(rpad(i.label, 30), 'head'), sg(i.it.d || '', 'dim')]); }
+  else if (n.t === 'inner') { title = `${n.p.n} › ${n.label}`; body = [[sg(`This ${KWORD[n.k]} is part of the plugin ${n.p.n}. Press v on ${n.p.n} to see the whole plugin.`, 'dim')]]; }
+  S.view = { title, body, off: 0 };
+}
+function drawView(lines) {
+  const V = S.view; if (!V) return;
+  const bw = W - 4, bh = H - 4, x = 2, y = 1, inner = bh - 4;
+  V.off = Math.max(0, Math.min(V.off, Math.max(0, V.body.length - inner)));
+  const rows = [paint(fit([sg(' ' + V.title, 'head')], bw), 'box'), paint(fit([], bw), 'box')];
+  for (let i = 0; i < inner; i++) rows.push(paint(fit([sg('  '), ...(V.body[V.off + i] || [])], bw), 'box'));
+  rows.push(paint(fit([], bw), 'box'));
+  rows.push(paint(fit([sg(` ↑↓ scroll · esc closes   ${V.body.length > inner ? `lines ${V.off + 1}-${Math.min(V.body.length, V.off + inner)} of ${V.body.length}` : ''}`, 'dim')], bw), 'box'));
+  rows.forEach((r, i) => { const L = lines[y + i]; if (L) lines[y + i] = [...cut(L, 0, x), ...r, ...cut(L, x + bw, W)]; });
+}
+function viewKey(k) {
+  if (k === 'esc' || k === 'v' || k === 'q') S.view = null;
+  else if (k === 'up') S.view.off--; else if (k === 'down') S.view.off++;
+  else if (k === 'space') S.view.off += H - 9;
+}
+function undo() { if (!S.undo) return say('Nothing to undo.', 'dim'); const u = S.undo; S.undo = null;
+  if (u.detach) { attach(u.detach[0], u.detach[1], false); return say(`↶ ${u.detach[0]} is off ${u.detach[1]} again`, 'ok'); }
+  S.kits[u.kit].uses = u.uses; say('↶ undone', 'ok'); check(); }
+
+// ── Render and input ─────────────────────────────────────────────────────────
+const term = document.getElementById('term');
+function render() {
+  ACTS = []; const lines = [];
+  ({ 1: d1Render, 2: d2Render, 3: d3Render, 4: d4Render })[design](lines);
+  while (lines.length < H) lines.push([]);
+  lines.length = H;
+  for (let i = 0; i < H; i++) lines[i] = fit(lines[i], W);
+  drawOverlay(lines); drawInput(lines); drawView(lines);
+  finish();
+  const frag = document.createDocumentFragment();
+  for (const L of lines) {
+    const div = document.createElement('div'); div.className = 'ln';
+    for (const s of L) { const sp = document.createElement('span'); sp.textContent = s[0]; if (s[1]) sp.className = s[1]; if (s[2] !== null && s[2] !== undefined) sp.dataset.a = s[2]; div.appendChild(sp); }
+    frag.appendChild(div);
+  }
+  term.replaceChildren(frag);
+  panel(); scale();
+}
+function key(k, counts = true) {
+  if (counts) { if (!S.t0) S.t0 = Date.now(); if (!S.doneAt) S.keys++; }
+  S.echo = null;
+  if (S.view) viewKey(k);
+  else if (S.input) inputKey(k);
+  else if (S.overlay) overlayKey(k);
+  else ({ 1: d1Key, 2: d2Key, 3: d3Key, 4: d4Key })[design](k);
+  render();
+}
+const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Tab: 'tab', Enter: 'enter', Escape: 'esc', Backspace: 'bs', ' ': 'space' };
+term.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  let k = KEYMAP[e.key];
+  if (!k && e.key.length === 1) k = e.key;
+  if (!k) return;
+  if (k === 'space' && S.input) k = ' ';
+  e.preventDefault(); key(k);
+});
+term.addEventListener('click', e => {
+  term.focus();
+  const sp = e.target.closest('span[data-a]'); if (!sp) return;
+  const fn = ACTS[+sp.dataset.a]; if (!fn) return;
+  if (!S.t0) S.t0 = Date.now();
+  if (!S.doneAt) S.keys++;
+  S.echo = null; fn(); render();
+});
+term.addEventListener('wheel', e => { if (S.input) return; if (S.view) { e.preventDefault(); S.view.off += e.deltaY > 0 ? 1 : -1; render(); return; } e.preventDefault(); key(e.deltaY > 0 ? 'down' : 'up', false); }, { passive: false });
+function scale() {
+  const wrap = term.parentElement, avail = wrap.clientWidth - 24;
+  const probe = 0.602; // JetBrains Mono advance width per px of font size
+  const fs = Math.max(8, Math.min(15, Math.floor((avail / (W * probe)) * 10) / 10));
+  term.style.fontSize = fs + 'px';
+}
+window.addEventListener('resize', scale);
+
+// ── Side panel ───────────────────────────────────────────────────────────────
+function panel() {
+  const ol = document.getElementById('steps'); ol.replaceChildren();
+  STEP_TEXT.forEach((t, i) => { const li = document.createElement('li'); if (S.steps[i]) li.className = 'done'; const b = document.createElement('span'); b.className = 'box2'; const s = document.createElement('span'); s.textContent = t; li.append(b, s); ol.appendChild(li); });
+  document.getElementById('keys').textContent = S.keys;
+  const secs = S.t0 ? Math.round(((S.doneAt || Date.now()) - S.t0) / 1000) : 0;
+  document.getElementById('secs').textContent = secs + 's';
+  const wn = document.getElementById('win');
+  wn.hidden = !S.doneAt; if (S.doneAt) wn.textContent = `Done in ${S.keys} keys and clicks, ${secs} seconds.`;
+  const tb = document.getElementById('runs'); tb.replaceChildren();
+  for (const d of [1, 2, 3, 4]) { const r = results[d], tr = document.createElement('tr'); for (const v of [`${d} · ${['Kit builder', 'Catalog grid', 'Profile board', 'Profile → kit'][d - 1]}`, r ? r.keys : '—', r ? r.secs + 's' : '—']) { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); } tb.appendChild(tr); }
+  const note = document.getElementById('note'); note.replaceChildren();
+  const h = document.createElement('h2'); h.textContent = 'This design'; note.appendChild(h);
+  const p1 = document.createElement('p'); p1.innerHTML = NOTES[design][0]; note.appendChild(p1);
+  const p2 = document.createElement('p'); p2.className = 'verdict'; p2.textContent = NOTES[design][1]; note.appendChild(p2);
+}
+setInterval(() => { if (S && S.t0 && !S.doneAt) document.getElementById('secs').textContent = Math.round((Date.now() - S.t0) / 1000) + 's'; }, 500);
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+function pick(d) {
+  design = d; reset();
+  document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.d === d)));
+  render(); term.focus();
+}
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => pick(+b.dataset.d)));
+document.getElementById('reset').addEventListener('click', () => pick(design));
+document.getElementById('size').addEventListener('click', e => {
+  size = size === 'big' ? 'small' : 'big'; [W, H] = size === 'big' ? [120, 36] : [80, 24];
+  e.target.textContent = `Terminal: ${W}×${H}`; S.off = {}; render(); term.focus();
+});
+reset(); render();
+</script>

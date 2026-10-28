@@ -6,13 +6,13 @@
 use crate::domain::{
     aws_profile_env, ccs_name_for_aws, checksum_for, git_source, newer_version, release_asset, launch_settings, next_statusline, settings_statusline, statusline_dir, check_env, compose_status, default_asset_name, default_settings, item_name,
     kit_args, kit_name_for_profile, plan_launch, provider_label, rewrite_folder, render_exports, resolve, resolve_kit, status_segment, with_kits, AwsRow,
-    CcsError, Finding, ImportOutcome, Kind, KitContents, KitName, LaunchPlan, LegacyItem, LibItem, LibraryRemoved,
+    agent_name_clashes, load_plan as plan_kits, resolve_lines, CcsError, LineGives, PluginContents, PluginPart, Finding, ImportOutcome, Kind, KitName, LaunchPlan, LegacyItem, LibItem, LibraryRemoved, LoadPlan,
     ListEntry, Overview, Profile, ProfileName, Use, Wrapped,
 };
 use crate::ports::{
     AwsProfiles, Browser, CommandRunner, Editor, Fetcher, KitStore, Releases, TextFiles, Launcher, Legacy, Library, PathInput, PinLocator, ProfileStore,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Turn the four sources of a profile name into a profile that exists.
 pub fn resolve_name(
@@ -44,9 +44,58 @@ pub fn launch(launcher: &dyn Launcher, plan: &LaunchPlan) -> CcsError {
     launcher.launch(plan)
 }
 
-/// What to run for a profile with kits (ADR-2610261643): `chosen` kits, else the
-/// profile's own. Each kit is rebuilt from the library. Returns the plan, and a
-/// warning for each kit entry the library no longer has; those do not stop the launch.
+/// What a profile loads (ADR-2610281305 R2): `chosen` kits, else the profile's
+/// own, resolved against the library. Reads only; builds nothing.
+pub fn load_plan(
+    store: &dyn ProfileStore,
+    kits: &dyn KitStore,
+    lib: &dyn Library,
+    name: &ProfileName,
+    chosen: Option<Vec<String>>,
+) -> Result<LoadPlan, CcsError> {
+    let wanted = chosen.unwrap_or_else(|| store.kits(name));
+    let names = wanted.iter().map(|k| existing_kit(kits, k)).collect::<Result<Vec<_>, _>>()?;
+    let picked = names
+        .into_iter()
+        .map(|k| {
+            let uses = kits.uses(&k)?;
+            let instructions = kits.instructions(&k);
+            Ok((k, uses, instructions))
+        })
+        .collect::<Result<Vec<_>, CcsError>>()?;
+    Ok(plan_kits(picked, &library_items(lib)))
+}
+
+/// The launch for a plan, naming the paths `build` and `write_prompt` use
+/// without touching them.
+fn launch_from(kits: &dyn KitStore, profile: &Profile, plan: &LoadPlan, args: Vec<String>, ccs_bin: &str) -> LaunchPlan {
+    let names = plan.kit_names();
+    let dirs: Vec<_> = names.iter().map(|k| kits.build_dir(k)).chain(plan.plugins.iter().map(|p| p.source.clone())).collect();
+    let prompt = plan.prompt().map(|_| kits.prompt_path(&names));
+    // The launch's own status line ranks above a project's, so the profile always shows.
+    let extra = ["--settings".to_string(), launch_settings(ccs_bin)].into_iter().chain(kit_args(&dirs, prompt.as_deref())).collect();
+    with_kits(plan_launch(profile, args), &names, extra)
+}
+
+/// The launch `prepare_launch` would make, with nothing built or written.
+pub fn planned_launch(
+    store: &dyn ProfileStore,
+    kits: &dyn KitStore,
+    lib: &dyn Library,
+    name: &ProfileName,
+    chosen: Option<Vec<String>>,
+    args: Vec<String>,
+    ccs_bin: &str,
+) -> Result<(LaunchPlan, Vec<String>), CcsError> {
+    let profile = store.load(name)?;
+    let plan = load_plan(store, kits, lib, name, chosen)?;
+    Ok((launch_from(kits, &profile, &plan, args, ccs_bin), plan.warnings))
+}
+
+/// What to run for a profile with kits (ADR-2610261643): the plan, with each
+/// kit rebuilt from the library and the instructions written. Returns the plan,
+/// and a warning for each kit entry the library no longer has; those do not
+/// stop the launch.
 pub fn prepare_launch(
     store: &dyn ProfileStore,
     kits: &dyn KitStore,
@@ -57,35 +106,14 @@ pub fn prepare_launch(
     ccs_bin: &str,
 ) -> Result<(LaunchPlan, Vec<String>), CcsError> {
     let profile = store.load(name)?;
-    let wanted = chosen.unwrap_or_else(|| store.kits(name));
-    let names = wanted.iter().map(|k| existing_kit(kits, k)).collect::<Result<Vec<_>, _>>()?;
-    let library = library_items(lib);
-    let (mut dirs, mut plugins, mut warnings, mut prompt) = (Vec::new(), Vec::<LibItem>::new(), Vec::new(), String::new());
-    for k in &names {
-        let contents = resolve_kit(&kits.uses(k)?, &library);
-        warnings.extend(contents.missing.iter().map(|m| format!("kit {}: {m} is not in the library; left out", k.as_str())));
-        // Skills and agents are built into the kit; a picked plugin loads as itself (§15).
-        let (picked, own): (Vec<LibItem>, Vec<LibItem>) = contents.items.into_iter().partition(|i| i.kind == Kind::Plugin);
-        dirs.push(kits.build(k, &own)?);
-        for p in picked {
-            if !plugins.iter().any(|x| x.name == p.name) {
-                plugins.push(p);
-            }
-        }
-        if let Some(text) = kits.instructions(k) {
-            prompt += &format!("<!-- kit {} -->\n{}\n", k.as_str(), text.trim_end());
-        }
+    let plan = load_plan(store, kits, lib, name, chosen)?;
+    for k in &plan.kits {
+        kits.build(&k.kit, &k.build)?;
     }
-    for p in plugins.iter().filter(|p| names.iter().any(|k| k.as_str() == p.name)) {
-        let n = &p.name;
-        warnings.push(format!("kit {n} and plugin {n} both name their skills {n}:…; rename the kit: ccs kit rename {n} <new>"));
+    if let Some(text) = plan.prompt() {
+        kits.write_prompt(&plan.kit_names(), &text)?;
     }
-    dirs.extend(plugins.into_iter().map(|p| p.source));
-    let prompt = if prompt.is_empty() { None } else { Some(kits.write_prompt(&names, &prompt)?) };
-    // The launch's own status line ranks above a project's, so the profile always shows.
-    let extra = ["--settings".to_string(), launch_settings(ccs_bin)].into_iter().chain(kit_args(&dirs, prompt.as_deref())).collect();
-    let plan = with_kits(plan_launch(&profile, args), &names, extra);
-    Ok((plan, warnings))
+    Ok((launch_from(kits, &profile, &plan, args, ccs_bin), plan.warnings))
 }
 
 pub fn list(store: &dyn ProfileStore, current: Option<&str>) -> Vec<ListEntry> {
@@ -163,14 +191,19 @@ pub fn doctor(
     out.push(Finding::Pass(format!("config dir: {}", profile.config_dir.display())));
     let library = library_items(lib);
     for k in store.kits(name) {
-        match existing_kit(kits, &k) {
+        match existing_kit(kits, &k).map(|kit| kits.uses(&kit)) {
             Err(_) => out.push(Finding::Fail(format!("kit '{k}' does not exist (see: ccs kit list)"))),
-            Ok(kit) => {
-                let contents = resolve_kit(&kits.uses(&kit)?, &library);
+            Ok(Err(e)) => out.push(Finding::Fail(format!("kit {k}: {e}"))),
+            Ok(Ok(uses)) => {
+                let contents = resolve_kit(&uses, &library);
                 out.extend(contents.missing.iter().map(|m| Finding::Warn(format!("kit {k}: {m} is not in the library"))));
                 out.push(Finding::Pass(format!("kit {k}: {} items", contents.items.len())));
             }
         }
+    }
+    let present: Vec<String> = store.kits(name).into_iter().filter(|k| existing_kit(kits, k).and_then(|kit| kits.uses(&kit)).is_ok()).collect();
+    if let Ok(plan) = load_plan(store, kits, lib, name, Some(present)) {
+        out.extend(agent_name_clashes(&plan.kits).into_iter().map(Finding::Warn));
     }
     let layout = legacy.layout();
     if !layout.is_empty() {
@@ -327,8 +360,17 @@ pub fn import_aws(
         }
         let r = aws.region(&a).or_else(|| region.map(String::from));
         store.create(&name, None)?;
-        store.write_env(&name, &aws_profile_env(&a, r.as_deref()))?;
-        seed_statusline(store, &name, ccs_bin)?;
+        // Undo a half-made profile: left behind, it would count as existing, and
+        // every later import would skip it instead of finishing it. Report the
+        // failure as this profile's outcome, so the ones already made still show.
+        let finish = store
+            .write_env(&name, &aws_profile_env(&a, r.as_deref()))
+            .and_then(|_| seed_statusline(store, &name, ccs_bin));
+        if let Err(e) = finish {
+            let _ = store.discard(&name);
+            out.push(skip(format!("could not finish ccs profile '{}': {e}", name.as_str())));
+            continue;
+        }
         out.push(ImportOutcome::Created { name: name.as_str().into(), region: r });
     }
     Ok(out)
@@ -345,24 +387,32 @@ fn legacy_path(i: &LegacyItem) -> String {
 }
 
 /// Copy old items into the library under `base`. An item whose name the library
-/// already has stays where it is, and a note names it. Returns which kinds landed.
-/// `retire` moves each copied original to the trash.
+/// already has elsewhere stays where it is, and a note names it. Returns which
+/// kinds are in the library at `base`, and the originals that are now copied
+/// there. `retire` only words the notes: the caller retires those originals,
+/// after the kit that points at the copies is written.
 fn adopt(
     lib: &dyn Library,
-    legacy: &dyn Legacy,
     items: &[LegacyItem],
     base: &str,
     owner: &str,
     retire: bool,
     notes: &mut Vec<String>,
-) -> Result<[bool; 2], CcsError> {
+) -> Result<([bool; 2], Vec<PathBuf>), CcsError> {
     let mut landed = [false, false];
+    let mut copied = Vec::new();
     for i in items {
         let what = format!("{}/{}", i.kind.dir(), legacy_path(i));
         let folder = if i.folder.is_empty() { base.to_string() } else { format!("{base}/{}", i.folder) };
         if let Some(have) = lib.items(i.kind).into_iter().find(|x| x.name == i.name) {
             let have = format!("{}/{}", i.kind.dir(), have.path());
-            notes.push(match (have.ends_with(&format!("{folder}/{}", i.name)), retire) {
+            let ours = have == format!("{}/{folder}/{}", i.kind.dir(), i.name);
+            if ours {
+                // A run that stopped before its kit was written: finish it.
+                landed[usize::from(i.kind == Kind::Agent)] = true;
+                copied.push(i.source.clone());
+            }
+            notes.push(match (ours, retire) {
                 (true, _) => format!("{owner}: {what} already in the library"),
                 // A copied source (~/.claude) keeps everything; nothing is "left" anywhere.
                 (false, false) => format!("{owner}: {what} not imported: the library already has {have}"),
@@ -371,13 +421,11 @@ fn adopt(
             continue;
         }
         lib.add(i.kind, &folder, &i.name, &i.source)?;
-        if retire {
-            legacy.retire(&i.source)?;
-        }
         landed[usize::from(i.kind == Kind::Agent)] = true;
+        copied.push(i.source.clone());
         notes.push(format!("{owner}: {what} → library/{}/{folder}/", i.kind.dir()));
     }
-    Ok(landed)
+    Ok((landed, copied))
 }
 
 /// Make the kit if needed, add folder entries for what landed, and take
@@ -401,7 +449,7 @@ fn fill_kit(kits: &dyn KitStore, kit: &KitName, folder: &str, landed: [bool; 2],
 }
 
 fn attach_last(store: &dyn ProfileStore, profile: &ProfileName, kit: &KitName) -> Result<(), CcsError> {
-    let mut mine = store.kits(profile);
+    let mut mine = store.read_kits(profile)?;
     if !mine.iter().any(|k| k == kit.as_str()) {
         mine.push(kit.as_str().into());
         store.set_kits(profile, &mine)?;
@@ -414,11 +462,10 @@ fn attach_last(store: &dyn ProfileStore, profile: &ProfileName, kit: &KitName) -
 pub fn import(lib: &dyn Library, kits: &dyn KitStore, legacy: &dyn Legacy) -> Result<Vec<String>, CcsError> {
     let (items, md) = legacy.stock();
     let mut notes = Vec::new();
-    adopt(lib, legacy, &items, "imported", "~/.claude", false, &mut notes)?;
+    let (landed, _) = adopt(lib, &items, "imported", "~/.claude", false, &mut notes)?;
     let kit = KitName::parse("imported")?;
-    let kinds = [items.iter().any(|i| i.kind == Kind::Skill), items.iter().any(|i| i.kind == Kind::Agent)];
     let text = md.map(|m| legacy.read(&m)).transpose()?;
-    fill_kit(kits, &kit, "imported", kinds, text)?;
+    fill_kit(kits, &kit, "imported", landed, text)?;
     Ok(notes)
 }
 
@@ -432,7 +479,7 @@ pub fn migrate(store: &dyn ProfileStore, lib: &dyn Library, kits: &dyn KitStore,
     let mut notes = Vec::new();
     if let Some((dir, items, md)) = &layout.shared {
         let kit = KitName::parse("shared")?;
-        let landed = adopt(lib, legacy, items, "shared", "shared", false, &mut notes)?;
+        let (landed, _) = adopt(lib, items, "shared", "shared", false, &mut notes)?;
         let text = md.as_ref().map(|m| legacy.read(m)).transpose()?;
         // Earlier versions always made shared/, often empty: no kit for nothing.
         if landed.contains(&true) || text.is_some() {
@@ -449,22 +496,29 @@ pub fn migrate(store: &dyn ProfileStore, lib: &dyn Library, kits: &dyn KitStore,
         }
     }
     for p in &layout.profiles {
+        let kit = kit_name_for_profile(p.name.as_str());
+        let (landed, copied) = adopt(lib, &p.own, kit.as_str(), p.name.as_str(), true, &mut notes)?;
+        let text = p.claude_md.as_ref().map(|m| legacy.read(m)).transpose()?;
+        if landed.contains(&true) || text.is_some() {
+            fill_kit(kits, &kit, kit.as_str(), landed, text)?;
+            attach_last(store, &p.name, &kit)?;
+            // Only now does a kit load the copies; retiring earlier strands
+            // them if the kit cannot be written.
+            for src in &copied {
+                legacy.retire(src)?;
+            }
+            if let Some(m) = &p.claude_md {
+                legacy.retire(m)?;
+                notes.push(format!("{}: CLAUDE.md → kit {}", p.name.as_str(), kit.as_str()));
+            }
+        }
+        // Last: these mark the old layout, so a rerun after a failure above
+        // still finds this profile.
         for link in &p.links {
             legacy.retire(link)?;
         }
         if !p.unshared.is_empty() {
             legacy.retire(&p.dir.join("unshared"))?;
-        }
-        let kit = kit_name_for_profile(p.name.as_str());
-        let landed = adopt(lib, legacy, &p.own, kit.as_str(), p.name.as_str(), true, &mut notes)?;
-        let text = p.claude_md.as_ref().map(|m| legacy.read(m)).transpose()?;
-        if landed.contains(&true) || text.is_some() {
-            fill_kit(kits, &kit, kit.as_str(), landed, text)?;
-            attach_last(store, &p.name, &kit)?;
-            if let Some(m) = &p.claude_md {
-                legacy.retire(m)?;
-                notes.push(format!("{}: CLAUDE.md → kit {}", p.name.as_str(), kit.as_str()));
-            }
         }
     }
     if let Some(dir) = &layout.native {
@@ -584,13 +638,36 @@ pub fn library_mkdir(lib: &dyn Library, kind: Kind, folder: &str) -> Result<(), 
     lib.make_folder(kind, folder)
 }
 
-/// Point every kit line under folder `from` at `to` (ADR-2610261643 §9).
-fn rewrite_kits(kits: &dyn KitStore, kind: Kind, from: &str, to: &str) -> Result<(), CcsError> {
+/// One kit whose lines a folder move changes: the kit, its new lines, its old lines.
+type KitRewrite = (KitName, Vec<Use>, Vec<Use>);
+
+/// Every kit line under folder `from`, pointed at `to` (ADR-2610261643 §9).
+/// Reads every kit before the folder moves: a kit that cannot be read stops
+/// the move while a retry can still find the folder.
+/// Each entry keeps the kit's old lines too, so a failed write can put it back.
+fn plan_kit_rewrites(kits: &dyn KitStore, kind: Kind, from: &str, to: &str) -> Result<Vec<KitRewrite>, CcsError> {
+    let mut out = Vec::new();
     for k in kits.names() {
         let uses = kits.uses(&k)?;
         let moved = rewrite_folder(&uses, kind, from, to);
         if moved != uses {
-            kits.set_uses(&k, &moved)?;
+            out.push((k, uses, moved));
+        }
+    }
+    Ok(out)
+}
+
+/// The folder has moved. If one kit cannot be written, put back the kits
+/// already written and move the folder back (`undo_move`), so no kit is left
+/// on a folder that is gone and a retry can still find the folder.
+fn write_kit_rewrites(kits: &dyn KitStore, plan: &[(KitName, Vec<Use>, Vec<Use>)], undo_move: impl FnOnce() -> Result<(), CcsError>) -> Result<(), CcsError> {
+    for (i, (k, _, moved)) in plan.iter().enumerate() {
+        if let Err(e) = kits.set_uses(k, moved) {
+            for (k, was, _) in &plan[..i] {
+                let _ = kits.set_uses(k, was);
+            }
+            let _ = undo_move();
+            return Err(e);
         }
     }
     Ok(())
@@ -621,12 +698,13 @@ pub fn library_move(lib: &dyn Library, kits: &dyn KitStore, what: &Use, to: &str
             f.clone()
         }
     };
+    let Use::Folder(_, f) = what else { return lib.move_to(kind, &from, to) };
+    let leaf = f.rsplit('/').next().unwrap_or(f);
+    let at = if to.is_empty() { leaf.to_string() } else { format!("{to}/{leaf}") };
+    let plan = plan_kit_rewrites(kits, kind, f, &at)?;
     lib.move_to(kind, &from, to)?;
-    if let Use::Folder(_, f) = what {
-        let leaf = f.rsplit('/').next().unwrap_or(f);
-        rewrite_kits(kits, kind, f, &if to.is_empty() { leaf.to_string() } else { format!("{to}/{leaf}") })?;
-    }
-    Ok(())
+    let parent = f.rsplit_once('/').map_or("", |(p, _)| p);
+    write_kit_rewrites(kits, &plan, || lib.move_to(kind, &at, parent))
 }
 
 /// Rename a folder where it is, and the kit lines under it.
@@ -638,27 +716,55 @@ pub fn library_rename_folder(lib: &dyn Library, kits: &dyn KitStore, kind: Kind,
     if !lib.folders(kind).iter().any(|f| f == folder) {
         return Err(CcsError::NoAsset(format!("{}/{folder}/ in the library", kind.dir())));
     }
-    lib.rename_folder(kind, folder, &name)?;
     let to = match folder.rsplit_once('/') {
         Some((parent, _)) => format!("{parent}/{name}"),
-        None => name,
+        None => name.clone(),
     };
-    rewrite_kits(kits, kind, folder, &to)
+    let plan = plan_kit_rewrites(kits, kind, folder, &to)?;
+    lib.rename_folder(kind, folder, &name)?;
+    let leaf = folder.rsplit('/').next().unwrap_or(folder);
+    write_kit_rewrites(kits, &plan, || lib.rename_folder(kind, &to, leaf))
 }
 
 /// Rename a kit, keeping its place in every profile's list.
-pub fn kit_rename(store: &dyn ProfileStore, kits: &dyn KitStore, old: &str, new: &str) -> Result<(), CcsError> {
+/// A kit is built as a plugin named after it, so a kit that takes a library
+/// plugin's name loads two plugins with one name (ADR-2610281305 R4).
+fn refuse_plugin_name(lib: &dyn Library, name: &str) -> Result<(), CcsError> {
+    if lib.items(Kind::Plugin).iter().any(|p| p.name == name) {
+        return Err(CcsError::Usage(format!("{name} is a plugin in the library; two plugins would load with one name. Choose another name.")));
+    }
+    Ok(())
+}
+
+pub fn kit_rename(store: &dyn ProfileStore, kits: &dyn KitStore, lib: &dyn Library, old: &str, new: &str) -> Result<(), CcsError> {
     let from = existing_kit(kits, old)?;
     let to = KitName::parse(new)?;
+    refuse_plugin_name(lib, new)?;
     if kits.exists(&to) {
         return Err(CcsError::Usage(format!("kit '{new}' already exists")));
     }
-    kits.rename(&from, &to)?;
+    // Profiles first, folder last: a failure part way puts back the profiles
+    // already rewritten, so every profile still names a kit that exists.
+    let mut done: Vec<(ProfileName, Vec<String>)> = Vec::new();
+    let undo = |done: &[(ProfileName, Vec<String>)]| {
+        for (p, was) in done {
+            let _ = store.set_kits(p, was);
+        }
+    };
     for p in store.names() {
         let mine = store.kits(&p);
         if mine.iter().any(|k| k == old) {
-            store.set_kits(&p, &mine.into_iter().map(|k| if k == old { new.to_string() } else { k }).collect::<Vec<_>>())?;
+            let renamed: Vec<String> = mine.iter().map(|k| if k == old { new.to_string() } else { k.clone() }).collect();
+            if let Err(e) = store.set_kits(&p, &renamed) {
+                undo(&done);
+                return Err(e);
+            }
+            done.push((p, mine));
         }
+    }
+    if let Err(e) = kits.rename(&from, &to) {
+        undo(&done);
+        return Err(e);
     }
     Ok(())
 }
@@ -679,28 +785,45 @@ pub fn library_remove(lib: &dyn Library, kits: &dyn KitStore, what: &Use) -> Res
             (f.clone(), library.iter().filter(|i| i.kind == kind && i.in_folder(f)).collect())
         }
     };
-    let users = kits
-        .names()
-        .into_iter()
-        .filter(|k| {
-            let uses = kits.uses(k).unwrap_or_default();
-            uses.contains(what) || resolve_kit(&uses, &library).items.iter().any(|i| gone.contains(&i))
-        })
-        .map(|k| k.as_str().to_string())
-        .collect();
+    // A kit that cannot be read stops the remove before anything is trashed:
+    // read as empty, it would be left out of `kits` with a dangling line.
+    let mut users = Vec::new();
+    for k in kits.names() {
+        let uses = kits.uses(&k)?;
+        if uses.contains(what) || resolve_kit(&uses, &library).items.iter().any(|i| gone.contains(&i)) {
+            users.push(k.as_str().to_string());
+        }
+    }
     Ok(LibraryRemoved { trashed: lib.trash(kind, &path)?, kits: users })
 }
 
+/// A skill's or agent's text; for a plugin, what it holds (ADR-2610281305 R5).
 pub fn library_show(lib: &dyn Library, what: &Use) -> Result<String, CcsError> {
-    lib.read(&library_item(lib, what)?)
+    let item = library_item(lib, what)?;
+    if item.kind != Kind::Plugin {
+        return lib.read(&item);
+    }
+    let c = lib.plugin_contents(&item);
+    let row = |p: &PluginPart| {
+        let shown = p.shown_name.as_deref().filter(|n| *n != p.file).map(|n| format!(" (shown as {n})")).unwrap_or_default();
+        let about = p.description.as_deref().map(|d| format!("  {d}")).unwrap_or_default();
+        format!("  {}{shown}{about}\n", p.file)
+    };
+    let mut out = format!("{}\n", item.description.as_deref().unwrap_or(&item.name));
+    out += &format!("\nSKILLS ({})\n", c.skills.len());
+    out.extend(c.skills.iter().map(row));
+    out += &format!("\nAGENTS ({})\n", c.agents.len());
+    out.extend(c.agents.iter().map(row));
+    Ok(out)
 }
 
 pub fn library_edit(lib: &dyn Library, editor: &dyn Editor, what: &Use) -> Result<(), CcsError> {
     editor.edit(&lib.main_file(&library_item(lib, what)?))
 }
 
-pub fn kit_new(kits: &dyn KitStore, raw: &str) -> Result<KitName, CcsError> {
+pub fn kit_new(kits: &dyn KitStore, lib: &dyn Library, raw: &str) -> Result<KitName, CcsError> {
     let k = KitName::parse(raw)?;
+    refuse_plugin_name(lib, raw)?;
     if kits.exists(&k) {
         return Err(CcsError::Usage(format!("kit '{raw}' already exists")));
     }
@@ -711,20 +834,94 @@ pub fn kit_new(kits: &dyn KitStore, raw: &str) -> Result<KitName, CcsError> {
 /// Trash a kit and detach it from every profile.
 pub fn kit_remove(store: &dyn ProfileStore, kits: &dyn KitStore, raw: &str) -> Result<std::path::PathBuf, CcsError> {
     let k = existing_kit(kits, raw)?;
+    // Profiles first, folder last, as in kit_rename: a failure part way puts
+    // back the profiles already detached, so a failed remove changes nothing.
+    let mut done: Vec<(ProfileName, Vec<String>)> = Vec::new();
+    let undo = |done: &[(ProfileName, Vec<String>)]| {
+        for (p, was) in done {
+            let _ = store.set_kits(p, was);
+        }
+    };
     for p in store.names() {
         let mine = store.kits(&p);
         if mine.iter().any(|m| m == k.as_str()) {
-            store.set_kits(&p, &mine.into_iter().filter(|m| m != k.as_str()).collect::<Vec<_>>())?;
+            let kept: Vec<String> = mine.iter().filter(|m| *m != k.as_str()).cloned().collect();
+            if let Err(e) = store.set_kits(&p, &kept) {
+                undo(&done);
+                return Err(e);
+            }
+            done.push((p, mine));
         }
     }
-    kits.remove(&k)
+    kits.remove(&k).inspect_err(|_| undo(&done))
 }
 
-pub fn kit_show(kits: &dyn KitStore, lib: &dyn Library, raw: &str) -> Result<(Vec<Use>, KitContents), CcsError> {
+/// Everything a profile loads, kit by kit and line by line, for `ccs loads`.
+pub fn loads(profile: &ProfileName, plan: &LoadPlan) -> String {
+    let names: Vec<&str> = plan.kits.iter().map(|k| k.kit.as_str()).collect();
+    let mut out = if names.is_empty() {
+        format!("{} loads no kits\n", profile.as_str())
+    } else {
+        format!("{} loads {} kit{}: {}\n", profile.as_str(), names.len(), if names.len() == 1 { "" } else { "s" }, names.join(" "))
+    };
+    for k in &plan.kits {
+        out += &format!("\nkit {}\n", k.kit.as_str());
+        if k.instructions.is_some() {
+            out += "  instructions (CLAUDE.md)\n";
+        }
+        out += &lines_text(&k.lines);
+    }
+    let mut seen: Vec<&LibItem> = Vec::new();
+    for i in plan.kits.iter().flat_map(|k| &k.build) {
+        if !seen.iter().any(|s| s.kind == i.kind && s.path() == i.path()) {
+            seen.push(i);
+        }
+    }
+    let count = |kind| seen.iter().filter(|i| i.kind == kind).count();
+    let plural = |n: usize, w: &str| format!("{n} {w}{}", if n == 1 { "" } else { "s" });
+    out += &format!(
+        "\ntotal: {} · {} · {}\n",
+        plural(count(Kind::Skill), "skill"),
+        plural(count(Kind::Agent), "agent"),
+        plural(plan.plugins.len(), "plugin")
+    );
+    if !plan.warnings.is_empty() {
+        out += "\nwarnings:\n";
+        out.extend(plan.warnings.iter().map(|w| format!("  {w}\n")));
+    }
+    out
+}
+
+/// A kit's lines, each with the items it gives, as `ccs loads` and `ccs kit show` print them.
+pub fn lines_text(lines: &[LineGives]) -> String {
+    if lines.is_empty() {
+        return "  (picks nothing)\n".into();
+    }
+    let mut out = String::new();
+    for g in lines {
+        let what = if g.missing {
+            "not in the library".to_string()
+        } else {
+            match &g.line {
+                Use::Folder(kind, _) => format!("folder · {} {}{}", g.items.len(), kind.label(), if g.items.len() == 1 { "" } else { "s" }),
+                Use::Item(kind, _) => kind.label().to_string(),
+            }
+        };
+        out += &format!("  {:<32} {what}\n", g.line.line());
+        if let Use::Folder(..) = g.line {
+            out.extend(g.items.iter().map(|i| format!("    {}\n", i.path())));
+        } else if let Some(i) = g.items.first().filter(|i| i.kind != Kind::Plugin) {
+            out += &format!("    {}\n", i.path());
+        }
+    }
+    out
+}
+
+/// A kit's lines, each with what it gives (ADR-2610281305): `ccs kit show`
+/// and the screen's column 3.
+pub fn kit_show(kits: &dyn KitStore, lib: &dyn Library, raw: &str) -> Result<Vec<LineGives>, CcsError> {
     let k = existing_kit(kits, raw)?;
-    let uses = kits.uses(&k)?;
-    let contents = resolve_kit(&uses, &library_items(lib));
-    Ok((uses, contents))
+    Ok(resolve_lines(&kits.uses(&k)?, &library_items(lib)))
 }
 
 /// Add entries to a kit. Each must name something in the library now.
@@ -747,9 +944,12 @@ pub fn kit_use(kits: &dyn KitStore, lib: &dyn Library, raw: &str, entries: &[Str
 pub fn kit_drop(kits: &dyn KitStore, raw: &str, entries: &[String]) -> Result<(), CcsError> {
     let k = existing_kit(kits, raw)?;
     let mut uses = kits.uses(&k)?;
+    // Check against the kit as it was, so an entry named twice is not refused
+    // the second time because the first already removed it.
+    let had = uses.clone();
     for e in entries {
         let u = Use::parse(e)?;
-        if !uses.contains(&u) {
+        if !had.contains(&u) {
             return Err(CcsError::NoAsset(format!("{} in kit {raw}", u.line())));
         }
         uses.retain(|x| *x != u);
@@ -768,7 +968,7 @@ fn set_profile_kits(store: &dyn ProfileStore, kits: &dyn KitStore, profile: &Pro
 pub fn kit_attach(store: &dyn ProfileStore, kits: &dyn KitStore, kit: &str, profile: &str, attach: bool) -> Result<(), CcsError> {
     let k = existing_kit(kits, kit)?;
     let p = existing(store, profile)?;
-    let mut mine: Vec<String> = store.kits(&p).into_iter().filter(|m| m != k.as_str()).collect();
+    let mut mine: Vec<String> = store.read_kits(&p)?.into_iter().filter(|m| m != k.as_str()).collect();
     if attach {
         mine.push(k.as_str().into());
     }
@@ -830,13 +1030,13 @@ impl Browser for App<'_> {
         kit_attach(self.store, self.kits, kit, profile.as_str(), on)
     }
     fn new_kit(&self, kit: &str) -> Result<(), CcsError> {
-        kit_new(self.kits, kit).map(|_| ())
+        kit_new(self.kits, self.lib, kit).map(|_| ())
     }
     fn remove_kit(&self, kit: &str) -> Result<std::path::PathBuf, CcsError> {
         kit_remove(self.store, self.kits, kit)
     }
     fn rename_kit(&self, kit: &str, to: &str) -> Result<(), CcsError> {
-        kit_rename(self.store, self.kits, kit, to)
+        kit_rename(self.store, self.kits, self.lib, kit, to)
     }
     fn kit_uses(&self, kit: &str) -> Result<Vec<Use>, CcsError> {
         self.kits.uses(&existing_kit(self.kits, kit)?)
@@ -847,6 +1047,15 @@ impl Browser for App<'_> {
         } else {
             kit_drop(self.kits, kit, &[entry.line()])
         }
+    }
+    fn kit_lines(&self, kit: &str) -> Result<Vec<LineGives>, CcsError> {
+        kit_show(self.kits, self.lib, kit)
+    }
+    fn load_plan(&self, profile: &ProfileName) -> Result<LoadPlan, CcsError> {
+        load_plan(self.store, self.kits, self.lib, profile, None)
+    }
+    fn plugin_contents(&self, plugin: &str) -> Result<PluginContents, CcsError> {
+        Ok(self.lib.plugin_contents(&library_item(self.lib, &Use::Item(Kind::Plugin, plugin.into()))?))
     }
     fn kit_instructions(&self, kit: &str) -> Option<String> {
         self.kits.instructions(&existing_kit(self.kits, kit).ok()?)

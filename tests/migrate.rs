@@ -149,6 +149,8 @@ fn a_profile_name_becomes_a_kit_name() {
     assert_eq!(k("claude.bedrock"), "claude-bedrock");
     assert_eq!(k("9lives"), "p-9lives");
     assert_eq!(k("kits"), "p-kits", "a reserved word is not a kit name");
+    assert_eq!(k("Shared"), "p-shared", "the kit migrate fills from shared/");
+    assert_eq!(k("imported"), "p-imported", "the kit migrate fills from ~/.claude");
 }
 
 #[test]
@@ -258,6 +260,29 @@ fn import_copies_dotclaude_into_the_library_and_changes_nothing_there() {
     assert!(again.contains("already in the library"), "{again}");
 }
 
+#[test]
+fn a_look_alike_folder_is_not_the_same_folder() {
+    let e = Env::new();
+    e.write("profiles/library/skills/old-imported/foo/SKILL.md", &skill("foo", "old"));
+    e.write("home/.claude/skills/foo/SKILL.md", &skill("foo", "new"));
+
+    let out = e.ok(&["import"]);
+    assert!(out.contains("not imported: the library already has skills/old-imported/foo"), "{out}");
+    assert!(!out.contains("already in the library"), "{out}");
+}
+
+#[test]
+fn import_names_no_folder_when_nothing_of_that_kind_landed() {
+    let e = Env::new();
+    e.write("profiles/library/skills/old-imported/foo/SKILL.md", &skill("foo", "old"));
+    e.write("home/.claude/skills/foo/SKILL.md", &skill("foo", "new"));
+    e.write("home/.claude/agents/sa.md", "---\ndescription: sa\n---\n");
+
+    e.ok(&["import"]);
+    assert!(!e.exists("profiles/library/skills/imported"), "the clashing skill is not copied");
+    assert_eq!(e.read("profiles/kits/imported/uses"), "agents/imported/\n", "no line for a skills folder that does not exist");
+}
+
 // ── ccs migrate ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -326,6 +351,27 @@ fn migrate_moves_shared_and_own_items_into_the_library_and_kits() {
 }
 
 #[test]
+fn a_profile_named_imported_keeps_its_own_kit() {
+    // Profiles migrate before native, so a profile kit `imported` would take
+    // ~/.claude's place: its CLAUDE.md wins and its items reach every profile
+    // that attaches imported.
+    let e = Env::new();
+    e.write("profiles/imported/profile.env", "");
+    e.write("profiles/imported/config/skills/priv/SKILL.md", &skill("priv", "mine"));
+    e.write("profiles/imported/config/CLAUDE.md", "MINE\n");
+    e.write("profiles/native/native", "");
+    e.write("profiles/native/profile.env", "");
+    e.write("home/.claude/CLAUDE.md", "STOCK RULES\n");
+    e.ok(&["migrate"]);
+
+    assert_eq!(e.read("profiles/kits/imported/CLAUDE.md"), "STOCK RULES\n");
+    assert_eq!(e.read("profiles/kits/p-imported/CLAUDE.md"), "MINE\n");
+    assert!(e.exists("profiles/library/skills/p-imported/priv/SKILL.md"));
+    assert!(!e.exists("profiles/library/skills/imported/priv"), "a private skill is not in kit imported");
+    assert_eq!(e.read("profiles/imported/kits"), "p-imported\n");
+}
+
+#[test]
 fn migrate_on_a_new_layout_does_nothing() {
     let e = Env::new();
     e.ok(&["new", "work"]);
@@ -356,4 +402,54 @@ fn a_name_twice_in_dotclaude_is_imported_once_and_the_other_is_named() {
     let line = out.lines().find(|l| l.contains("core/review")).unwrap_or_else(|| panic!("{out}"));
     assert!(line.contains("not imported") && line.contains("analysis/review"), "{line}");
     assert!(!out.contains("left in place"), "nothing moves out of ~/.claude: {out}");
+}
+
+#[test]
+fn a_migrate_that_cannot_attach_the_kit_keeps_the_originals_and_a_rerun_finishes() {
+    // The originals were retired before the kit was written: a failure there
+    // left the items in the library with no kit to load them, for good.
+    let e = Env::new();
+    e.write("profiles/work/profile.env", "");
+    e.write("profiles/work/config/skills/own/SKILL.md", &skill("own", "work's own"));
+    e.write("profiles/work/config/agents/mine.md", "---\ndescription: mine\n---\n");
+    // An empty shared/ makes no kit, so the first kit attached is work's own.
+    fs::create_dir_all(e.home().join("shared")).unwrap();
+    link(&e.home().join("shared/skills/common"), &e.home().join("work/config/skills/common"));
+    // A folder where the kits file goes: attaching the kit fails.
+    fs::create_dir_all(e.home().join("work/kits")).unwrap();
+
+    e.err(&["migrate"]);
+    assert!(e.exists("profiles/work/config/skills/own/SKILL.md"), "the original stays until a kit loads the copy");
+    assert!(e.exists("profiles/work/config/agents/mine.md"));
+
+    fs::remove_dir(e.home().join("work/kits")).unwrap();
+    e.ok(&["migrate"]);
+    assert_eq!(e.read("profiles/kits/work/uses"), "skills/work/\nagents/work/\n");
+    assert_eq!(e.read("profiles/work/kits"), "work\n");
+    assert!(e.exists("profiles/library/skills/work/own/SKILL.md"));
+    assert!(!e.exists("profiles/work/config/skills/common"), "the link into shared/ is retired too");
+    assert!(!e.exists("profiles/work/config/skills/own"), "retired once the kit is attached");
+    assert!(!e.exists("profiles/work/config/agents/mine.md"));
+}
+
+#[test]
+fn a_rerun_after_shared_landed_still_makes_and_attaches_the_shared_kit() {
+    // A rerun found shared/'s items already in library/…/shared/, counted
+    // nothing as landed, skipped the kit, and retired shared/ anyway: every
+    // profile lost the shared skills for good.
+    let e = Env::new();
+    e.write("profiles/shared/skills/common/SKILL.md", &skill("common", "shared body"));
+    e.write("profiles/work/profile.env", "");
+    link(&e.home().join("shared/skills/common"), &e.home().join("work/config/skills/common"));
+    // A folder where the kits file goes: attaching the kit fails.
+    fs::create_dir_all(e.home().join("work/kits")).unwrap();
+
+    e.err(&["migrate"]);
+    assert!(e.exists("profiles/library/skills/shared/common/SKILL.md"), "the first run copied shared/");
+    assert!(e.exists("profiles/shared/skills/common/SKILL.md"), "shared/ stays until its kit is attached");
+
+    fs::remove_dir(e.home().join("work/kits")).unwrap();
+    e.ok(&["migrate"]);
+    assert_eq!(e.read("profiles/kits/shared/uses"), "skills/shared/\n");
+    assert_eq!(e.read("profiles/work/kits"), "shared\n");
 }

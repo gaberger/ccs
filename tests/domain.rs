@@ -415,3 +415,66 @@ fn sync_is_reserved_and_says_it_is_not_built() {
     }
     assert!(ProfileName::parse("sync").is_err(), "a profile cannot take the command's name");
 }
+
+// ── ADR-2610281305: search order and part-picked folders ─────────────────────
+
+/// Names from the real library, including the two a plain substring search
+/// put first: `plan-segmentation-check` for "egm" and `validate-nqe-query`
+/// (its description says "writing") for "writing".
+fn found(query: &str) -> Vec<&'static str> {
+    use ccs::domain::{rank, Found};
+    let rows: [(&str, &str, &str, Found); 7] = [
+        ("plan-segmentation-check", "skills/network/plan/plan-segmentation-check", "Check that segments are kept apart", Found::Item),
+        ("validate-nqe-query", "skills/network/nqe/validate-nqe-query", "Use after writing a query", Found::Item),
+        ("humanize-writing", "skills/writing/humanize-writing", "Rewrite AI text", Found::Item),
+        ("forward-generate-report", "skills/writing/forward-generate-report", "Branded documents", Found::Item),
+        ("egm_draft", "plugins/egm/egm_draft", "Draft a design", Found::InPlugin),
+        ("writing", "skills/writing/", "", Found::Folder),
+        ("egm", "plugins/egm", "Elephant and goldfish reviews", Found::Plugin),
+    ];
+    let mut hits: Vec<(u32, &str)> = rows.iter().filter_map(|(n, p, d, k)| rank(query, n, p, d, *k).map(|r| (r, *n))).collect();
+    hits.sort();
+    hits.into_iter().map(|(_, n)| n).collect()
+}
+
+#[test]
+fn search_puts_a_name_match_before_a_path_match_before_a_description_match() {
+    assert_eq!(found("egm"), ["egm", "egm_draft", "plan-segmentation-check"]);
+    assert_eq!(found("writing"), ["writing", "humanize-writing", "forward-generate-report", "validate-nqe-query"]);
+    assert_eq!(found("egm draft"), ["egm_draft"], "every word must match somewhere");
+    assert_eq!(found("WRITING")[0], "writing", "case does not matter");
+    assert!(found("nothing-like-this").is_empty());
+}
+
+#[test]
+fn a_folder_with_some_items_picked_says_how_many() {
+    use ccs::domain::{library_tree, pick_in, Kind, LibItem, Pick, Use};
+    let item = |folder: &str, name: &str| LibItem {
+        kind: Kind::Skill,
+        name: name.into(),
+        folder: folder.into(),
+        description: None,
+        shown_name: None,
+        source: std::path::PathBuf::from(format!("/lib/{folder}/{name}")),
+    };
+    let lib = vec![item("net/nqe", "find-nqe-query"), item("net", "inspect-edge"), item("writing", "humanize"), item("ops", "deploy")];
+    let folders = vec!["net".to_string(), "net/nqe".to_string(), "ops".to_string(), "writing".to_string()];
+    let tree = library_tree(&lib, &folders);
+    let row = |path: &str| tree.iter().find(|r| r.path == path).unwrap_or_else(|| panic!("{path} not in {tree:?}"));
+    let uses = vec![Use::Item(Kind::Skill, "find-nqe-query".into()), Use::Folder(Kind::Skill, "writing".into())];
+    assert_eq!(pick_in(&uses, Kind::Skill, row("net"), &lib), Pick::Partly { picked: 1, total: 2 });
+    assert_eq!(pick_in(&uses, Kind::Skill, row("net/nqe"), &lib), Pick::Partly { picked: 1, total: 1 }, "picked one by one, not as a folder");
+    assert_eq!(pick_in(&uses, Kind::Skill, row("writing"), &lib), Pick::Direct);
+    assert_eq!(pick_in(&uses, Kind::Skill, row("writing/humanize"), &lib), Pick::Through("skills/writing/".into()));
+    assert_eq!(pick_in(&uses, Kind::Skill, row("ops"), &lib), Pick::No);
+    assert_eq!(pick_in(&uses, Kind::Skill, row("net/nqe/find-nqe-query"), &lib), Pick::Direct);
+}
+
+#[test]
+fn loads_names_a_profile_or_the_resolved_one_and_is_reserved() {
+    let none = |_: &str| false;
+    assert_eq!(parse_command(&args(&["loads"]), none).unwrap(), Command::Loads(None));
+    assert_eq!(parse_command(&args(&["loads", "work"]), none).unwrap(), Command::Loads(Some("work".into())));
+    assert!(ProfileName::parse("loads").is_err(), "a profile cannot take the command's name");
+    assert!(ccs::domain::HELP.contains("ccs loads"), "help names it");
+}

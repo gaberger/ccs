@@ -15,7 +15,7 @@ There are two kinds of port here:
   the TUI in `adapters/primary/` calls. A primary adapter reaches the
   application only through this trait. To draw its pages it also uses the
   re-exported value types and pure functions (`library_tree`, `pick`,
-  `resolve_kit`).
+  `pick_in`, `rank`, `resolve_kit`).
 
 The module also re-exports the domain value types that adapters need, under
 port-local names, so an adapter imports nothing but `crate::ports`.
@@ -27,8 +27,8 @@ port-local names, so an adapter imports nothing but `crate::ports`.
 | Trait | Purpose | Implementer |
 |---|---|---|
 | `ProfileStore` | Profiles: names, exists, load, create (optionally from another, never copying its login), default profile (read, set, clear), folder, `profile.env` (path, write), `settings.json`, default kits | `FsProfileStore` (`fs_store.rs`) |
-| `Library` | Skills and agents kept in folders, and plugins (no folders): list, classify a source, add, make/move/rename folders, read, main file, trash, plugin manifest name | `FsLibrary` (`fs_library.rs`) |
-| `KitStore` | Kits (named picks from the library): create, rename, trash, `uses`, instructions, build into a plugin dir, write a launch's joined prompt | `FsKitStore` (`fs_kits.rs`) |
+| `Library` | Skills and agents kept in folders, and plugins (no folders): list, classify a source, add, make/move/rename folders, read, main file, trash, plugin manifest name, plugin contents | `FsLibrary` (`fs_library.rs`) |
+| `KitStore` | Kits (named picks from the library): create, rename, trash, `uses` (saved atomically, keeping comments), instructions, build into a plugin dir, write a launch's joined prompt, and `build_dir`/`prompt_path`, which only name those paths | `FsKitStore` (`fs_kits.rs`) |
 | `Fetcher` | Clone a git URL into a temp folder, discard it, `git pull --ff-only` | `GitFetcher` (`git_fetcher.rs`) |
 | `Legacy` | Layout left by earlier ccs versions and the stock `~/.claude`; read-only except `retire` | `FsLegacy` (`fs_legacy.rs`) |
 | `PathInput` | Expand and tab-complete paths typed into the TUI | `FsPathInput` (`fs_paths.rs`) |
@@ -49,7 +49,8 @@ port-local names, so an adapter imports nothing but `crate::ports`.
   (`library`, `read`, `edit`, `add`, `mkdir`, `move_entry`, `rename_folder`,
   `remove`, `update_plugins`), path completion (`complete_path`), and the
   one-off commands (`needs_migrate`, `migrate`, `import_claude`,
-  `aws_profiles`, `import_aws`). Implemented by `App` and called from
+  `aws_profiles`, `import_aws`), and for the column screen (ADR-2610281305)
+  `kit_lines`, `load_plan` and `plugin_contents`. Implemented by `App` and called from
   `src/adapters/primary/tui.rs`.
 
 ### Re-exports from `crate::domain` (for adapters)
@@ -70,7 +71,7 @@ port-local names, so an adapter imports nothing but `crate::ports`.
 | `OldItem`, `OldLayout`, `OldProfile` | `LegacyItem`, `LegacyLayout`, `LegacyProfile` |
 | `AwsProfileRow`, `AwsImport` | `AwsRow`, `ImportOutcome` |
 | `parse_profile_env` | `parse_env` |
-| Same name | `front_matter_description`, `manifest_field`, `resolve_kit`, `library_tree`, `pick`, `Pick`, `Finding`, `TreeRow` |
+| Same name | `front_matter_description`, `front_matter_name`, `pick_in`, `rank`, `Found`, `LineGives`, `LoadPlan`, `PlannedKit`, `PluginContents`, `PluginPart`, `manifest_field`, `resolve_kit`, `library_tree`, `pick`, `Pick`, `Finding`, `TreeRow` |
 
 ## Invariants
 
@@ -100,6 +101,11 @@ port-local names, so an adapter imports nothing but `crate::ports`.
   - `KitStore::remove`, `Library::trash` and `Legacy::retire` move to the
     trash whole rather than deleting. `Legacy::retire` removes a link instead.
   - `KitStore::build` rebuilds the kit plugin to hold exactly the given items.
+  - `KitStore::build` and `write_prompt` write exactly to `build_dir` and
+    `prompt_path`, which touch nothing, so a launch can be planned without
+    building.
+  - `KitStore::set_uses` replaces the file whole or not at all, and keeps its
+    comments and blank lines; a line still picked keeps its place.
   - `Legacy` is read-only except `retire`. It never writes the stock
     `~/.claude`.
   - `Releases::install` replaces the running binary whole or not at all.

@@ -63,18 +63,33 @@ The ADRs cited below live in `docs/adrs/` at the repository root.
 - `Kind` (`Skill`, `Agent`, `Plugin`), with `label()` and `dir()` (`skills`,
   `agents`, `plugins`).
 - `item_name(Kind, &str)`, `default_asset_name(Kind, &str)`,
-  `front_matter_description(&str)`: item names and YAML front matter.
+  `front_matter_description(&str)`, `front_matter_name(&str)`: item names and
+  YAML front matter. The front-matter `name` is what Claude Code shows.
 - `Use` (`Folder(Kind, String)` or `Item(Kind, String)`), with `parse`, `kind`,
   `line`: one line of a kit's `uses`, such as `skills/net/` or
   `skills/humanize`.
-- `LibItem { kind, name, folder, description, source }`, with `path()` and
-  `in_folder()`.
+- `LibItem { kind, name, folder, description, shown_name, source }`, with
+  `path()` and `in_folder()`.
 - `KitContents { items, missing }` and
   `resolve_kit(&[Use], &[LibItem]) -> KitContents`.
+- `LineGives { line, items, missing }` and `resolve_lines(&[Use], &[LibItem])
+  -> Vec<LineGives>`: what each kit line gives (ADR-2610281305).
+- `LoadPlan { kits, plugins, warnings }` of `PlannedKit { kit, lines, build,
+  instructions }`, with `kit_names()` and `prompt()`, and `load_plan(kits,
+  library) -> LoadPlan`: what a launch loads, worked out without building.
+- `agent_name_clashes(&[PlannedKit]) -> Vec<String>`: two agents in one kit
+  under one front-matter name.
+- `PluginContents { skills, agents }` of `PluginPart { file, shown_name,
+  description }`: what a plugin holds.
 - `KitName::parse`, `as_str`, and `kit_name_for_profile(&str) -> KitName`.
 - `TreeRow { path, depth, item }` (`leaf`, `entry`, `folder`),
   `library_tree(&[LibItem], &[String]) -> Vec<TreeRow>`, `Pick` (`Direct`,
-  `Through(line)`, `No`), `pick(&[Use], Kind, &TreeRow) -> Pick`.
+  `Through(line)`, `Partly { picked, total }`, `No`), `pick(&[Use], Kind,
+  &TreeRow) -> Pick`, and `pick_in(…, &[LibItem]) -> Pick`, which adds
+  `Partly` for a folder some of whose items are picked.
+- `Found` and `rank(query, name, path, description, Found) -> Option<u32>`:
+  search order. Per word: exact name, name starts with, name holds, path,
+  description; a word that matches nothing drops the row.
 - `rewrite_folder(&[Use], Kind, from, to) -> Vec<Use>`: kit lines after a folder
   is renamed.
 - `LibraryRemoved { trashed, kits }`.
@@ -142,7 +157,9 @@ The ADRs cited below live in `docs/adrs/` at the repository root.
 - **Kit names** start with a lowercase letter and contain only lowercase
   letters, digits and `-`. They cannot be `kit`, `kits`, `library` or `lib`.
   `kit_name_for_profile` returns a valid name when its input is a valid
-  profile name, and falls back to a `p-<name>` prefix. It does not check its
+  profile name, and falls back to a `p-<name>` prefix. It also uses the prefix
+  for `shared` and `imported` (e.g. a profile `Shared`), because migrate fills
+  those kits itself and attaches them to other profiles. It does not check its
   input, so pass it `ProfileName::as_str()` only.
 - **Item and folder names** are path-safe: each segment uses the same character
   set as a profile name. Plugins have no folders (`plugins/<name>` only).
@@ -167,6 +184,11 @@ The ADRs cited below live in `docs/adrs/` at the repository root.
 - **Kit resolution.** `resolve_kit` returns items in library order, each item
   once, and lists every `uses` line that matches nothing in the library. A
   folder line picks every item of the same kind at or under that folder.
+  `resolve_lines` and `pick_in` use the same matching rule (`picks`).
+- **One plan.** `load_plan` is the only place that decides what a launch
+  loads: the items each kit is built from, the plugins (each once), the
+  joined instructions, and the warnings. `pick` never returns `Partly`; only
+  `pick_in` does.
 - **Versions.** `newer_version` is false when either side is not `X.Y.Z` or
   `vX.Y.Z`, so an unreadable version is never treated as newer.
 - **Status line.** `next_statusline` skips any command that is `ccs statusline`

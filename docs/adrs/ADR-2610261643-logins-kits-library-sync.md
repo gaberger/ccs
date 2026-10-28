@@ -1,6 +1,7 @@
 # ADR-2610261643: Logins and kits are separate; a library in folders; edit; sync across hosts
 
 **Status:** Accepted
+**Partly-Superseded-By:** ADR-2610281305 (§18-§21: Home, the pages and their keys, replaced by four columns, profile first; 2026-10-28). Everything else here stays in force.
 **Date:** 2026-10-26
 **Drivers:** User feedback, shared by other users: skills are hard to manage in
 one flat list; items cannot be edited from ccs; the stock `~/.claude` should
@@ -639,3 +640,10 @@ whose `claude` is a script that prints its arguments, and one real
 
 - ADR-2610261212, ADR-2610261244, ADR-2610261255, ADR-2610261720,
   ADR-2610261902, ADR-2610261933
+
+## Later changes (2026-10-28)
+
+§18-§21 (Home, the pages, the keys, the empty-library messages) are replaced by
+ADR-2610281305: one screen of four columns, used left to right, 1 profile → 2
+its kits → 3 what is in the kit → 4 add from the library. The model of this ADR
+(logins, kits, the library in folders, plugins, `uses` lines) does not change.

@@ -34,9 +34,9 @@ it hands the adapters to the use cases as port trait objects.
   adapter needs a domain type, the port re-exports it.
 - Adapters never import other adapters. Primary and secondary adapters reach
   each other only through ports and the composition root.
-- Only `src/lib.rs` imports anything under `adapters::`. The integration test
-  `tests/tui.rs` also imports `ccs::adapters::primary::tui`, to drive the
-  screen without a terminal.
+- Only `src/lib.rs` imports anything under `adapters::`. The integration tests
+  `tests/tui.rs` and `tests/parity.rs` also import `ccs::adapters::primary::tui`,
+  to drive the screen without a terminal.
 - `tests/boundaries.rs` enforces the primary rule against the source text.
   `hexa analyze .` checks the rest.
 

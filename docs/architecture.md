@@ -31,7 +31,7 @@ The code is hexagonal, and `hexa analyze .` checks the boundaries:
 | ports | `src/ports/mod.rs` | `domain`, for value types |
 | use cases | `src/usecases/mod.rs` | `domain`, `ports` |
 | secondary adapters | `src/adapters/secondary/*.rs` | `ports` only |
-| primary adapter (TUI) | `src/adapters/primary/tui.rs` | `ports` only |
+| primary adapter (TUI) | `src/adapters/primary/tui/` | `ports` only |
 | composition root | `src/lib.rs` | everything |
 
 Adapters never import each other. When an adapter needs a domain type, it gets
@@ -160,14 +160,18 @@ The `CCS_*_BIN` variables are how the tests replace `claude`, `aws`, `git` and
    default.
 3. **Load.** `ProfileStore::load` reads `<home>/work/profile.env` and the
    config dir `<home>/work/config/`.
-4. **Build kits.** `prepare_launch` takes the kits named on the command line,
+4. **Plan, then build.** `load_plan` takes the kits named on the command line,
    else the profile's own. A kit that doesn't exist stops the launch
-   (`no kit '<name>'`). Then, for each kit, it:
+   (`no kit '<name>'`). The pure `domain::load_plan` then, for each kit:
    - resolves its entries against the library, collecting a warning for each
      missing one (a missing entry doesn't stop the launch)
    - splits out picked plugins, which load as they are, and dedups them
      across kits
-   - calls `KitStore::build`, which clears `<home>/.build/<kit>/` and rebuilds
+   - notes two agents with one front-matter name, as a warning
+
+   This plan is all `ccs loads` and the screen read; it builds nothing
+   (ADR-2610281305). `prepare_launch` then, for each kit, calls
+   `KitStore::build`, which clears `<home>/.build/<kit>/` and rebuilds
      it as a plugin. Skills are links into the library, so edits show up
      immediately. Agents are copies, because Claude Code doesn't read an agent
      through a link.
@@ -175,8 +179,9 @@ The `CCS_*_BIN` variables are how the tests replace `claude`, `aws`, `git` and
      `<home>/.build/<kit+kit…>.md`
 
    When a kit and a picked plugin share a name, both name their skills
-   `<name>:…`, so `prepare_launch` warns and says to rename the kit. The
-   launch goes on.
+   `<name>:…`, so the plan warns and says to rename the kit. The launch goes
+   on. `ccs kit new` and `kit rename` refuse a plugin's name, so this only
+   happens when the plugin arrives after the kit.
 5. **Plan.** `plan_launch` unsets the provider variables inherited from the
    shell, so a Bedrock export can't leak into a personal login. It then sets
    the profile's variables, `CLAUDE_CONFIG_DIR` and `CCS_PROFILE`.
@@ -218,24 +223,36 @@ to it.
 
 ## The TUI
 
-`src/adapters/primary/tui.rs` is a ratatui app built in three parts:
+`src/adapters/primary/tui/` is a ratatui app: one screen of four columns,
+used left to right (ADR-2610281305): 1 profile → 2 its kits → 3 what is in the
+kit → 4 add from the library. It is built in parts:
 
-- `State` takes a `Key` (the adapter's own key type) or a mouse hit and updates
-  itself, calling `Browser` for anything that reads or changes data
-- `draw(frame, &State)` paints it
-- `run` is the only public part that touches a terminal. It calls the private
-  `drive`, which opens the terminal (`open_terminal`: alternate screen, mouse
-  capture), runs the event loop, and closes it (`close_terminal`) on every
-  path. To hand off to an editor, `drive` closes the terminal, waits for the
-  editor, and opens it again.
+- `State` (`columns.rs`) takes a `Key` (the adapter's own key type) or a mouse
+  hit and updates itself, calling `Browser` for anything that reads or changes
+  data. After every change it reads everything again; it keeps no copy that a
+  later read could contradict.
+- `draw(frame, &State)` (`draw.rs`) paints it: the step line, the columns, the
+  description strip, the notice with the matching `ccs` command, and the key
+  line.
+- `overlays.rs` holds what sits on top for a moment: search, typed text, a y/n
+  question, the `v` reader, the import list.
+- `run` (`mod.rs`) is the only public part that touches a terminal. It calls
+  the private `drive`, which opens the terminal (alternate screen, mouse
+  capture), runs the event loop, and closes it on every path. To hand off to
+  an editor, `drive` closes the terminal, waits for the editor, and opens it
+  again.
+
+Column 3 on a profile reads `Browser::load_plan`, the same plan the launch uses
+and `ccs loads` prints. A change in the TUI runs the same use case as the CLI
+command it displays, and `tests/parity.rs` runs that displayed command on a
+second home to prove it.
 
 Because only `run` needs a terminal, `tests/tui.rs` drives `State` with keys
 and draws into ratatui's `TestBackend`. Leaving the TUI returns an `Exit`:
-`Quit`, `Launch(name)` with the profile's kits, `LaunchWith { profile, kits }`
-with kits picked for this launch only, or `Shell(name)`, a shell in the
-profile's folder with its variables. The terminal is restored by then, and
-`lib.rs` launches exactly as `ccs <name>` would, or execs `$SHELL` for
-`Shell`. Pages and keys are specified in ADR-2610261643 §18.
+`Quit`, `Launch(name)` with the profile's kits, `LaunchWith { profile, kits }`,
+or `Shell(name)`, a shell in the profile's folder with its variables. The
+terminal is restored by then, and `lib.rs` launches exactly as `ccs <name>`
+would, or execs `$SHELL` for `Shell`.
 
 ## Status line
 
@@ -281,7 +298,9 @@ failure, not a pass. The tests are split by what they guard:
 | `cli.rs` | the real binary end to end, with a fake `claude` that prints its env and args |
 | `upgrade.rs` | `ccs upgrade` against a fake `gh` serving archives built in the test |
 | `assets.rs` | item front matter, typed paths, the real `App` behind `Browser` |
-| `tui.rs` | the TUI through keys and `TestBackend`, with a fake `Browser` |
+| `tui.rs` | the column screen through keys and `TestBackend`, with a fake `Browser` shaped like the real library: the success test (G1), every key on screen first (G2), search order (G1b) |
+| `parity.rs` | each change made on the screen, its displayed `ccs` command run on a second home, the two homes compared (G3) |
+| `loads.rs` | the planned launch equals the built one, and planning writes nothing (G4) |
 | `boundaries.rs` | primary adapters import none of `usecases`, `domain`, secondary adapters |
 
 No test touches the real `~/.claude`.
@@ -294,6 +313,7 @@ No test touches the real `~/.claude`.
 | [2610261237](adrs/ADR-2610261237-statusline-segment.md) | the status line shows the profile, wrapping any existing one | Accepted |
 | [2610261238](adrs/ADR-2610261238-import-aws-profiles.md) | import AWS CLI profiles as Bedrock profiles | Accepted |
 | [2610261255](adrs/ADR-2610261255-ratatui-tui.md) | ratatui TUI as the first primary adapter | Accepted |
-| [2610261643](adrs/ADR-2610261643-logins-kits-library-sync.md) | logins and kits separate; library in folders; plugins; Home and pages | Accepted |
+| [2610261643](adrs/ADR-2610261643-logins-kits-library-sync.md) | logins and kits separate; library in folders; plugins (its Home and pages are replaced by 2610281305) | Accepted |
 | [2610271000](adrs/ADR-2610271000-release-and-upgrade.md) | releases built by CI, and `ccs upgrade` | Accepted |
+| [2610281305](adrs/ADR-2610281305-profile-first-columns.md) | the TUI becomes four columns, profile first; one load plan; safe kit saves | Proposed |
 | 2610261244, 2610261720, 2610261902, 2610261933 | per-profile items, `shared/`, copying between profiles | Superseded by 2610261643 |

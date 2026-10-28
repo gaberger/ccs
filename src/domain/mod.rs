@@ -29,7 +29,7 @@ pub const PROVIDER_VARS: &[&str] = &[
 const RESERVED: &[&str] = &[
     "list", "ls", "new", "import", "default", "env", "link", "doctor", "which", "help", "statusline", "skill", "skills",
     "agent", "agents", "claude-md", "claudemd", "ui", "shared", "kit", "kits", "library", "lib", "migrate", "upgrade", "version",
-    "sync",
+    "sync", "loads",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,6 +216,8 @@ pub enum Command {
     Default(Option<String>),
     Env(Option<String>),
     Doctor(Option<String>),
+    /// What a profile loads, built from nothing (ADR-2610281305).
+    Loads(Option<String>),
     Which,
     Help,
     Statusline { wrap: Vec<String> },
@@ -295,6 +297,34 @@ pub fn default_asset_name(kind: Kind, source: &str) -> Option<String> {
 }
 
 /// The `description:` from YAML front matter: plain, quoted, or a `|` / `>` block.
+/// The `name:` in a skill's or agent's front matter: the name Claude Code shows.
+pub fn front_matter_name(text: &str) -> Option<String> {
+    let mut lines = text.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    let line = lines.take_while(|l| l.trim() != "---").find(|l| l.starts_with("name:"))?;
+    let name = unquote(line["name:".len()..].trim()).to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// One skill or agent inside a plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginPart {
+    /// The skill's folder name, or the agent's file name without `.md`.
+    pub file: String,
+    pub shown_name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// What a plugin holds, found the way Claude Code finds it:
+/// `skills/*/SKILL.md` and `agents/*.md`, each sorted by file name.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PluginContents {
+    pub skills: Vec<PluginPart>,
+    pub agents: Vec<PluginPart>,
+}
+
 pub fn front_matter_description(text: &str) -> Option<String> {
     let mut lines = text.lines();
     if lines.next()?.trim() != "---" {
@@ -363,6 +393,7 @@ pub fn parse_command(args: &[String], is_profile: impl Fn(&str) -> bool) -> Resu
         Some("default") => Command::Default(second()),
         Some("env") => Command::Env(second()),
         Some("doctor") => Command::Doctor(second()),
+        Some("loads") => Command::Loads(second()),
         Some("new") => {
             let usage = || CcsError::Usage("ccs new <name> [--from <profile>]".into());
             let name = second().ok_or_else(usage)?;
@@ -539,6 +570,9 @@ pub struct LibItem {
     pub name: String,
     pub folder: String,
     pub description: Option<String>,
+    /// The front-matter `name`: what Claude Code shows, which can differ from
+    /// the file or folder name (ADR-2610281305 R5).
+    pub shown_name: Option<String>,
     /// The skill's folder or the agent's file.
     pub source: PathBuf,
 }
@@ -567,24 +601,147 @@ pub struct KitContents {
     pub missing: Vec<String>,
 }
 
+/// Whether `line` picks `item`: a folder line picks everything at or under its
+/// folder; an item line picks by name.
+fn picks(line: &Use, item: &LibItem) -> bool {
+    match line {
+        Use::Folder(k, f) => *k == item.kind && item.in_folder(f),
+        Use::Item(k, n) => *k == item.kind && *n == item.name,
+    }
+}
+
 pub fn resolve_kit(uses: &[Use], library: &[LibItem]) -> KitContents {
-    let picked = |i: &LibItem| {
-        uses.iter().any(|u| match u {
-            Use::Folder(k, f) => *k == i.kind && i.in_folder(f),
-            Use::Item(k, n) => *k == i.kind && *n == i.name,
+    let missing = uses.iter().filter(|u| !library.iter().any(|i| picks(u, i))).map(Use::line).collect();
+    KitContents { items: library.iter().filter(|i| uses.iter().any(|u| picks(u, i))).cloned().collect(), missing }
+}
+
+/// What one `uses` line gives (ADR-2610281305): the library items it picks, in
+/// library order, or nothing. A plugin line gives the plugin as one item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineGives {
+    pub line: Use,
+    pub items: Vec<LibItem>,
+    /// The line matches nothing in the library.
+    pub missing: bool,
+}
+
+pub fn resolve_lines(uses: &[Use], library: &[LibItem]) -> Vec<LineGives> {
+    uses.iter()
+        .map(|u| {
+            let items: Vec<LibItem> = library.iter().filter(|i| picks(u, i)).cloned().collect();
+            LineGives { line: u.clone(), missing: items.is_empty(), items }
         })
-    };
-    let missing = uses
+        .collect()
+}
+
+/// One kit of a launch, as planned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedKit {
+    pub kit: KitName,
+    /// Each `uses` line and what it gives.
+    pub lines: Vec<LineGives>,
+    /// The skills and agents the kit's plugin is built from, each once, in library order.
+    pub build: Vec<LibItem>,
+    pub instructions: Option<String>,
+}
+
+/// What a launch loads, worked out without building anything (ADR-2610281305
+/// R2). The screen, `ccs loads` and the launch all read this one value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadPlan {
+    /// In launch order.
+    pub kits: Vec<PlannedKit>,
+    /// The plugins the kits pick, each once, loaded as themselves.
+    pub plugins: Vec<LibItem>,
+    pub warnings: Vec<String>,
+}
+
+impl LoadPlan {
+    pub fn kit_names(&self) -> Vec<KitName> {
+        self.kits.iter().map(|k| k.kit.clone()).collect()
+    }
+
+    /// The kits' instructions joined into one prompt, or `None` when no kit has any.
+    pub fn prompt(&self) -> Option<String> {
+        let text: String = self
+            .kits
+            .iter()
+            .filter_map(|k| k.instructions.as_ref().map(|i| format!("<!-- kit {} -->\n{}\n", k.kit.as_str(), i.trim_end())))
+            .collect();
+        (!text.is_empty()).then_some(text)
+    }
+}
+
+/// Two agents built into one kit under one front-matter name: Claude Code shows
+/// one of them (ADR-2610281305 R6). One warning per name, in library order.
+pub fn agent_name_clashes(kits: &[PlannedKit]) -> Vec<String> {
+    let mut out = Vec::new();
+    for k in kits {
+        let agents: Vec<&LibItem> = k.build.iter().filter(|i| i.kind == Kind::Agent).collect();
+        let shown = |i: &LibItem| i.shown_name.clone().unwrap_or_else(|| i.name.clone());
+        let mut names: Vec<String> = Vec::new();
+        for a in &agents {
+            let n = shown(a);
+            if names.contains(&n) {
+                continue;
+            }
+            let same: Vec<String> = agents.iter().filter(|b| shown(b) == n).map(|b| b.path()).collect();
+            if same.len() > 1 {
+                out.push(format!("kit {}: agents {} are both named {n}; Claude Code shows one of them", k.kit.as_str(), same.join(" and ")));
+            }
+            names.push(n);
+        }
+    }
+    out
+}
+
+/// Plan a launch of `kits` (each with its `uses` and instructions) against the library.
+pub fn load_plan(kits: Vec<(KitName, Vec<Use>, Option<String>)>, library: &[LibItem]) -> LoadPlan {
+    let mut plan = LoadPlan { kits: Vec::new(), plugins: Vec::new(), warnings: Vec::new() };
+    for (kit, uses, instructions) in kits {
+        let contents = resolve_kit(&uses, library);
+        plan.warnings.extend(contents.missing.iter().map(|m| format!("kit {}: {m} is not in the library; left out", kit.as_str())));
+        // Skills and agents are built into the kit; a picked plugin loads as itself (ADR-2610261643 §15).
+        let (picked, items): (Vec<LibItem>, Vec<LibItem>) = contents.items.into_iter().partition(|i| i.kind == Kind::Plugin);
+        // The build names a skill or agent by its name alone, so two of one name
+        // in different folders would land on one path. Keep the first, name the rest.
+        let mut build: Vec<LibItem> = Vec::new();
+        for i in items {
+            match build.iter().find(|b| b.kind == i.kind && b.name == i.name) {
+                Some(first) => {
+                    let d = i.kind.dir();
+                    plan.warnings.push(format!(
+                        "kit {}: {d}/{} and {d}/{} are both named {}; {d}/{} is left out",
+                        kit.as_str(),
+                        first.path(),
+                        i.path(),
+                        i.name,
+                        i.path()
+                    ));
+                }
+                None => build.push(i),
+            }
+        }
+        for p in picked {
+            if !plan.plugins.iter().any(|x| x.name == p.name) {
+                plan.plugins.push(p);
+            }
+        }
+        plan.kits.push(PlannedKit { lines: resolve_lines(&uses, library), kit, build, instructions });
+    }
+    let same = agent_name_clashes(&plan.kits);
+    plan.warnings.extend(same);
+    let clashes: Vec<String> = plan
+        .plugins
         .iter()
-        .filter(|u| {
-            !library.iter().any(|i| match u {
-                Use::Folder(k, f) => *k == i.kind && i.in_folder(f),
-                Use::Item(k, n) => *k == i.kind && *n == i.name,
-            })
+        .filter(|p| plan.kits.iter().any(|k| k.kit.as_str() == p.name))
+        .map(|p| {
+            let n = &p.name;
+            format!("kit {n} and plugin {n} both name their skills {n}:…; rename the kit: ccs kit rename {n} <new>")
         })
-        .map(Use::line)
         .collect();
-    KitContents { items: library.iter().filter(|i| picked(i)).cloned().collect(), missing }
+    plan.warnings.extend(clashes);
+    plan
 }
 
 /// Words that read as a command after `ccs kit`, or name ccs's own dirs.
@@ -612,10 +769,15 @@ impl KitName {
     }
 }
 
-/// The kit a migrated profile's own items go into: the profile name, made a kit name.
+/// Kits migrate makes itself: shared/ goes into `shared`, ~/.claude into
+/// `imported`, and both attach to more than one profile.
+const MIGRATION_KITS: &[&str] = &["shared", "imported"];
+
+/// The kit a migrated profile's own items go into: the profile name, made a kit
+/// name, and never one of the `MIGRATION_KITS`.
 pub fn kit_name_for_profile(profile: &str) -> KitName {
     let k: String = profile.to_ascii_lowercase().chars().map(|c| if c == '_' || c == '.' { '-' } else { c }).collect();
-    KitName::parse(&k).unwrap_or_else(|_| KitName(format!("p-{k}")))
+    KitName::parse(&k).ok().filter(|n| !MIGRATION_KITS.contains(&n.as_str())).unwrap_or_else(|| KitName(format!("p-{k}")))
 }
 
 /// One row of a library tree: a folder (`item` is `None`) or an item, at its depth.
@@ -663,7 +825,66 @@ pub enum Pick {
     Direct,
     /// A folder above it is picked; holds that folder's entry line.
     Through(String),
+    /// A folder not picked as a whole, with `picked` of its `total` items picked
+    /// by other lines. Only `pick_in` returns it (ADR-2610281305).
+    Partly { picked: usize, total: usize },
     No,
+}
+
+/// `pick`, and for a folder that is not picked, how many of its items are.
+pub fn pick_in(uses: &[Use], kind: Kind, row: &TreeRow, library: &[LibItem]) -> Pick {
+    let p = pick(uses, kind, row);
+    if p != Pick::No || row.item.is_some() {
+        return p;
+    }
+    let inside: Vec<&LibItem> = library.iter().filter(|i| i.kind == kind && i.in_folder(&row.path)).collect();
+    let picked = inside.iter().filter(|i| uses.iter().any(|u| picks(u, i))).count();
+    if picked == 0 {
+        Pick::No
+    } else {
+        Pick::Partly { picked, total: inside.len() }
+    }
+}
+
+/// What a search result is, for ordering results of equal rank.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Found {
+    Plugin,
+    Folder,
+    Item,
+    /// A skill or agent inside a plugin.
+    InPlugin,
+}
+
+/// Where a row falls in a search for `query` (lower is first), or `None` when
+/// a word of the query matches nothing (ADR-2610281305). Per word: the exact
+/// name, then a name that starts with it, then a name that holds it, then the
+/// path, then the description. At an equal rank: plugins, folders, items.
+pub fn rank(query: &str, name: &str, path: &str, description: &str, found: Found) -> Option<u32> {
+    let (name, path, description) = (name.to_lowercase(), path.to_lowercase(), description.to_lowercase());
+    let mut total = 0;
+    for w in query.to_lowercase().split_whitespace() {
+        total += if name == w {
+            0
+        } else if name.starts_with(w) {
+            1
+        } else if name.contains(w) {
+            2
+        } else if path.contains(w) {
+            3
+        } else if description.contains(w) {
+            5
+        } else {
+            return None;
+        };
+    }
+    let order = match found {
+        Found::Plugin => 0,
+        Found::Folder => 1,
+        Found::Item => 2,
+        Found::InPlugin => 3,
+    };
+    Some(total * 4 + order)
 }
 
 pub fn pick(uses: &[Use], kind: Kind, row: &TreeRow) -> Pick {
@@ -1120,6 +1341,7 @@ A launch is a profile plus kits. Nothing starts until you choose a profile.
   ccs default [<name>]           show or set the default profile
   ccs env [<name>]               print exports: eval \"$(ccs env work)\"
   ccs doctor [<name>]            check a profile and its kits
+  ccs loads [<name>]             what a profile loads: each kit, line and item (builds nothing)
   ccs which                      print the resolved profile
   ccs ui                         browse profiles, kits and the library; launch from the list
   ccs statusline [-- <cmd…>]     status line segment; wraps an existing status line command

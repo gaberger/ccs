@@ -1,66 +1,60 @@
 {
   "sessions": {
     "6a3d646e-4989-4530-afa4-82d2819a5889": {
-      "adr": "ADR-2610261643",
+      "adr": "ADR-2610281305",
       "files": [
-        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/skills/elephant-goldfish-method/SKILL.md",
-        "tests/cli.rs",
-        "docs/adrs/ADR-2610261643-library-folders-declarative-profiles-sync.md",
-        "tests/kits.rs",
-        "tests/migrate.rs",
         "tests/tui.rs",
-        "src/ports/mod.rs",
-        "src/adapters/secondary/fs_store.rs",
-        "src/adapters/secondary/fs_legacy.rs",
-        "tests/assets.rs",
-        "src/main.rs",
-        "README.md",
-        "tests/plugins.rs",
-        "docs/adrs/ADR-2610271000-release-and-upgrade.md",
-        "tests/upgrade.rs",
-        ".claude/skills/ccs-release/SKILL.md",
-        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/refuses-a-dirty-tree/without_skill/outputs/commands.md",
-        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/refuses-a-dirty-tree/with_skill/outputs/commands.md",
-        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/explains-why-upgrade-misses-a-change/with_skill/outputs/commands.md",
-        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/explains-why-upgrade-misses-a-change/with_skill/outputs/report.txt",
-        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/explains-why-upgrade-misses-a-change/without_skill/outputs/commands.md",
-        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/ship-a-feature-as-minor/with_skill/outputs/commands.md",
-        "/private/tmp/claude-501/-Volumes-Crucial-projects-switcher/6a3d646e-4989-4530-afa4-82d2819a5889/scratchpad/ccs-release-workspace/iteration-1/ship-a-feature-as-minor/without_skill/outputs/commands.md",
-        "src/adapters/primary/tui.rs",
-        "docs/adrs/ADR-2610261643-logins-kits-library-sync.md",
-        ".claude/worktrees/agent-a0699704097b8b387/docs/architecture.md"
+        "tests/parity.rs",
+        "src/adapters/primary/tui/mod.rs",
+        "src/adapters/primary/tui/widgets.rs",
+        "src/adapters/primary/tui/columns.rs",
+        "src/adapters/primary/tui/overlays.rs",
+        "src/adapters/primary/tui/draw.rs",
+        "src/adapters/primary/README.md"
       ],
-      "gate": "cargo test && cargo clippy --all-targets -- -D warnings && hexa analyze . --grade A+ --exit-code",
+      "gate": "cargo test 2>&1 | tee /tmp/ccs-test.log >/dev/null; awk '/^test result:/ {p+=$4; f+=$6} END {exit (p == 0 || f > 0)}' /tmp/ccs-test.log && cargo test --test loads 2>&1 | grep -Eq 'test result: ok\\. [1-9]' && cargo test --test tui columns_ 2>&1 | grep -Eq 'test result: ok\\. [1-9][0-9]' && cargo test --test parity 2>&1 | grep -Eq 'test result: ok\\. [1-9]' && cargo clippy --all-targets -- -D warnings && hexa analyze . --grade A+ --exit-code",
       "pid": 65232,
       "pid_start": null,
-      "stage": "gate",
+      "running": null,
+      "stage": "harden",
       "tasks": [
         {
-          "done_at": "2026-10-26T20:56:08.272453+00:00",
+          "done_at": "2026-10-28T18:59:58.054124+00:00",
           "status": "done",
-          "title": "1 edit: Editor port, TUI e, ccs … edit"
+          "title": "column tests red in tests/tui.rs: G1 success script at 120x36 and 80x24, G1b search order, G2 every key visible first, column behaviour; Fake shaped like the real library"
         },
         {
-          "done_at": "2026-10-26T21:18:06.038769+00:00",
+          "done_at": "2026-10-28T18:59:58.067237+00:00",
           "status": "done",
-          "title": "library and kits, build, launch with +kit"
+          "title": "G3 tests/parity.rs red: each TUI change, the displayed ccs command run on a second home, the two homes compared"
         },
         {
-          "done_at": "2026-10-26T21:44:46.805826+00:00",
+          "done_at": "2026-10-28T19:12:26.578606+00:00",
           "status": "done",
-          "title": "TUI: profiles, kits, library tree"
+          "title": "src/adapters/primary/tui/ mod.rs and widgets.rs: Key, Exit, the loop, Scroll, render_list, Hit, moved from tui.rs"
         },
         {
-          "done_at": "2026-10-26T21:44:46.816949+00:00",
+          "done_at": "2026-10-28T19:12:26.596266+00:00",
           "status": "done",
-          "title": "start with nothing: drop native and shared, import, migrate"
+          "title": "columns.rs: State, the four columns, their keys, search, undo, the import list, input, confirm and the v reader"
         },
         {
-          "status": "doing",
-          "title": "ccs sync over git"
+          "done_at": "2026-10-28T19:12:26.611463+00:00",
+          "status": "done",
+          "title": "draw.rs: the step line, the also-on line, the columns at 3 widths, the description strip, the key line; tui.rs deleted"
+        },
+        {
+          "done_at": "2026-10-28T19:16:44.116961+00:00",
+          "status": "done",
+          "title": "contract and docs: primary README, README.md, docs/architecture.md, src/README.md, src/adapters/README.md"
+        },
+        {
+          "done_at": "2026-10-28T19:39:02.438139+00:00",
+          "status": "done",
+          "title": "see it work in a real terminal at 120x36 and 80x24 with the pty grid replay; hexa harden src/adapters/primary/tui/"
         }
       ],
-      "updated": "2026-10-28T11:42:10.743160+00:00"
+      "updated": "2026-10-28T19:39:02.438741+00:00"
     },
     "70ff75bc-cc22-4d38-9e36-5590bc1abf37": {
       "files": [
