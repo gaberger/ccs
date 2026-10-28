@@ -787,10 +787,7 @@ impl State {
                 if self.col != target {
                     // Columns 3 and 4 act on the kit they show, as `go` does.
                     if target >= Col::Contents {
-                        match self.shown_kit() {
-                            Some(k) => self.kit = Some(k),
-                            None => return None,
-                        }
+                        self.kit = Some(self.shown_kit()?);
                     }
                     self.col = target;
                 }
