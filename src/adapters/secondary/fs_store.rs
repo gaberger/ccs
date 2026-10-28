@@ -103,9 +103,23 @@ impl ProfileStore for FsProfileStore {
 
     fn create(&self, name: &Name, from: Option<&Name>) -> Result<(), Error> {
         let dir = self.dir(name);
+        // Leave nothing half-made behind, and remove nothing that was there
+        // before: a folder that is not a profile can still hold a login.
+        let made = !dir.exists();
+        let config_made = !self.config(name).exists();
+        let ours = [dir.join(ENV_FILE), dir.join(KITS_FILE), self.config(name).join(SETTINGS_FILE)];
+        let fresh: Vec<bool> = ours.iter().map(|p| !p.exists()).collect();
         self.build(name, from).map_err(|e| {
-            // Leave nothing half-made behind.
-            let _ = fs::remove_dir_all(&dir);
+            if made {
+                let _ = fs::remove_dir_all(&dir);
+            } else {
+                for (p, _) in ours.iter().zip(&fresh).filter(|(_, f)| **f) {
+                    let _ = fs::remove_file(p);
+                }
+                if config_made {
+                    let _ = fs::remove_dir(self.config(name));
+                }
+            }
             io_err("cannot create", &dir)(e)
         })
     }

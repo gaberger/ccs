@@ -110,6 +110,25 @@ fn cloning_from_a_missing_profile_fails_and_creates_nothing() {
 }
 
 #[test]
+fn a_failed_create_keeps_what_the_folder_held_before() {
+    // A folder with no profile.env is not a profile, but it can hold a login.
+    let sb = Sandbox::new();
+    let login = sb.write("profiles/work/config/.claude.json", "{}");
+    let store = sb.store();
+    assert!(store.create(&name("work"), Some(&name("ghost"))).is_err(), "ghost has no profile.env to copy");
+    assert!(login.is_file(), "the login that was there before is kept");
+    assert!(!sb.home().join("work/profile.env").exists(), "what this call wrote is removed");
+}
+
+#[test]
+fn a_failed_create_of_a_new_folder_leaves_nothing() {
+    let sb = Sandbox::new();
+    let store = sb.store();
+    assert!(store.create(&name("fresh"), Some(&name("ghost"))).is_err());
+    assert!(!sb.home().join("fresh").exists());
+}
+
+#[test]
 fn list_marks_current_and_default_and_names_kits() {
     let sb = Sandbox::new();
     sb.write("profiles/library/skills/x/SKILL.md", "x");

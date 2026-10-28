@@ -99,7 +99,10 @@ impl Releases for GhReleases {
         let current = fs::canonicalize(&current).unwrap_or(current);
         // Beside the running binary, then renamed over it: never a half-written ccs.
         let next = current.with_file_name(format!(".ccs-upgrade-{}", std::process::id()));
-        fs::copy(binary, &next).map_err(io(&next))?;
+        if let Err(e) = fs::copy(binary, &next) {
+            let _ = fs::remove_file(&next);
+            return Err(io(&next)(e));
+        }
         let placed = fs::set_permissions(&next, std::os::unix::fs::PermissionsExt::from_mode(0o755)).and_then(|()| fs::rename(&next, &current));
         if let Err(e) = placed {
             let _ = fs::remove_file(&next);

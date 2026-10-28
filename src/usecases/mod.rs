@@ -190,7 +190,6 @@ pub fn exports(store: &dyn ProfileStore, name: &ProfileName) -> Result<String, C
     Ok(render_exports(&plan_launch(&store.load(name)?, vec![])))
 }
 
-/// The status line (ADR-2610261237): the segment, in front of a wrapped command's output.
 /// What `ccs upgrade` did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Upgraded {
@@ -227,7 +226,8 @@ pub fn upgrade(rel: &dyn Releases, current: &str, target: Option<&str>, wanted: 
         }
         let binary = rel.unpack(&dir.join(&asset))?;
         let said = rel.probe(&binary).map_err(|e| CcsError::Io(format!("ccs {version}: {e}; nothing installed")))?;
-        if !said.contains(&version) {
+        // The version word itself: `ccs 0.5.10` is not 0.5.1.
+        if said.split_whitespace().last().map(|w| w.trim_start_matches('v')) != Some(version.as_str()) {
             return Err(CcsError::Io(format!("the downloaded ccs says '{said}', not {version}; nothing installed")));
         }
         rel.install(&binary)
@@ -262,6 +262,7 @@ pub fn statusline_auto(runner: &dyn CommandRunner, files: &dyn TextFiles, vars: 
     compose_status(status_segment(vars), wrapped)
 }
 
+/// The status line (ADR-2610261237): the segment, in front of a wrapped command's output.
 pub fn statusline(runner: &dyn CommandRunner, vars: &[(String, String)], stdin: &[u8], wrap: &[String]) -> String {
     let wrapped = if wrap.is_empty() {
         Wrapped::Nothing

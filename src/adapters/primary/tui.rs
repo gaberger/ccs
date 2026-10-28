@@ -2216,6 +2216,10 @@ fn drive(b: &dyn Browser, state: &mut dyn Screen) -> std::io::Result<Exit> {
                 if let Some(exit) = state.key(b, key) {
                     break Ok(exit);
                 }
+                // A double-click can ask for an edit, as Enter does.
+                if state.edit(b) {
+                    terminal = open_terminal();
+                }
             }
             Ok(_) => {}
             Err(e) => break Err(e),

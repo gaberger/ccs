@@ -255,6 +255,17 @@ fn a_new_binary_that_names_another_version_is_not_installed() {
 }
 
 #[test]
+fn a_new_binary_whose_version_only_starts_the_same_is_not_installed() {
+    let e = Env::new();
+    e.publish("9.9.9", "echo 'ccs 9.9.90'", true);
+    e.latest("9.9.9");
+    let (ok, out) = e.says(&["upgrade"]);
+    assert!(!ok && out.contains("9.9.90"), "{out}");
+    assert_eq!(e.version(), format!("ccs {VERSION}"));
+    assert!(e.tmp_is_empty(), "a failed upgrade removes its download folder");
+}
+
+#[test]
 fn without_gh_upgrade_says_how_to_get_it() {
     let e = Env::new();
     let out = e.run_with(Path::new("/nonexistent/gh"), &["upgrade"]);

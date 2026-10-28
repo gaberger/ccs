@@ -42,7 +42,7 @@ pub trait ProfileStore {
     fn set_kits(&self, name: &ProfileName, kits: &[String]) -> Result<(), CcsError>;
 }
 
-/// Every skill and agent, kept in folders (ADR-2610261643).
+/// Every skill and agent, kept in folders, and every plugin, which has none (ADR-2610261643).
 pub trait Library {
     /// Sorted by folder, then name.
     fn items(&self, kind: Kind) -> Vec<LibItem>;

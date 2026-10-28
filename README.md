@@ -9,8 +9,8 @@ Switch Claude Code between logins — a personal claude.ai account, AWS Bedrock 
 ccs keeps two things apart:
 
 - A **profile** is a login: its provider variables (Bedrock, model, region) and
-  its own Claude Code config directory, which holds only login state and
-  history.
+  its own Claude Code config directory, which holds login state, history
+  and the `settings.json` that ccs seeds for the status line.
 - A **kit** is a named set of skills and agents from your **library**, plus
   optional instructions (a CLAUDE.md).
 
@@ -300,3 +300,57 @@ the TUI (a primary adapter) imports `ports/` only.
 | `CCS_REPO` | Where `ccs upgrade` looks for releases. Default `gaberger/ccs`. |
 | `VISUAL`, `EDITOR` | The editor `edit` and the TUI's `e` open. Default `vi`. |
 | `SHELL` | The shell a profile's `shell` opens in the TUI. Default `/bin/sh`. |
+
+## System Overview
+
+This section and the ones after it are the repository blueprint: the contract
+each part of the code keeps, for a person or an agent about to change it.
+[What This Does](#what-this-does) says what ccs is for. In code terms, ccs is
+one Rust binary in hexagonal layers. `src/domain` holds the rules, `src/ports`
+the contracts, `src/usecases` one function per command, and `src/adapters` the
+TUI and the code that touches files, `git`, `gh`, `aws` and `claude`.
+`src/lib.rs` wires them once.
+
+## Local Interface & Invariants
+
+- `start.sh`: builds a release with `cargo build --release`, then runs
+  `target/release/ccs` with your arguments. `./start.sh --install` copies the
+  binary to `$CCS_INSTALL_DIR`, default `~/.local/bin`, with mode 0755.
+- `start.sh` stops with a message if `cargo` is not on your PATH.
+
+## Subdirectories & System Boundaries
+
+- src: [./src/README.md](./src/README.md) - the program; `lib.rs` is the composition root.
+  - src/domain: [./src/domain/README.md](./src/domain/README.md) - pure rules: names, `profile.env`, resolution, the launch plan, kits, the CLI words. No I/O.
+  - src/ports: [./src/ports/README.md](./src/ports/README.md) - 13 driven ports and the driving port `Browser`; re-exports the domain types that adapters need.
+  - src/usecases: [./src/usecases/README.md](./src/usecases/README.md) - one function per command; `App` implements `Browser` for the TUI.
+  - src/adapters: [./src/adapters/README.md](./src/adapters/README.md) - the ratatui TUI ([primary](./src/adapters/primary/README.md)) and 13 driven adapters ([secondary](./src/adapters/secondary/README.md)).
+- tests: the gate. Not a contract package.
+- docs: [architecture](./docs/architecture.md) and the decisions in `docs/adrs/`.
+
+## Global Invariants
+
+- The layers keep the hexagonal import rules in `CLAUDE.md`. `hexa analyze .`
+  checks them, and `tests/boundaries.rs` checks that the TUI imports `ports/` only.
+- ccs never writes to `~/.claude`. A profile's `config/` holds login state,
+  history and the `settings.json` that ccs seeds for the status line; kits and the library live beside it under `$CCS_HOME`.
+- A launch changes the environment of one `claude` process only. It unsets the
+  inherited provider variables first, so one login cannot leak into another.
+- Removal moves things to `$CCS_HOME/.trash`. It does not erase them.
+- `ccs upgrade` installs a release only after its checksum matches and the new
+  binary reports exactly the expected version.
+
+## Global Side Effects
+
+- Files under `$CCS_HOME` (default `~/.claude-profiles`): profiles, the
+  library, kits, `.build/` and `.trash/`.
+- Reads `~/.claude` for import and migration, and `.claude-profile` pin files.
+- External programs: `claude` (by exec), `$SHELL` (by exec, for a profile's
+  shell in the TUI), `git`, `gh`, `aws`, `tar`, a checksum
+  tool, the editor and a wrapped status line command.
+- Network through `git` and `gh`. `ccs upgrade` replaces the running binary.
+
+## System Verification
+
+- Run: `cargo test`
+- Then: `cargo clippy --all-targets -- -D warnings` and `hexa analyze . --grade A+ --exit-code`
