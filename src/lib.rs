@@ -130,7 +130,7 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
         claude_available,
         current,
     };
-    // Home and its pages (ADR-2610261643 §18); `args` go to claude on a launch.
+    // The column screen (ADR-2610281305); `args` go to claude on a launch.
     let ui = |current: Option<String>, args: Vec<String>| -> Result<i32, CcsError> {
         if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
             return Err(CcsError::Usage("ccs ui needs a terminal".into()));
@@ -158,7 +158,7 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
     let command = parse_command(&args, |s| ProfileName::parse(s).is_ok_and(|n| usecases::existing(&store, n.as_str()).is_ok()))?;
     match command {
         Command::Launch { profile, kits: chosen, args } => {
-            // A bare `ccs` on a terminal opens Home, the start screen (ADR-2610261643 §18);
+            // A bare `ccs` on a terminal opens the column screen (ADR-2610281305);
             // with nothing resolved it never falls back to ~/.claude (§5).
             if profile.is_none() && chosen.is_none() && std::io::stdout().is_terminal() && std::io::stdin().is_terminal() {
                 hint_migrate();
