@@ -1,6 +1,6 @@
 # ADR-2610281305: The TUI becomes four columns, profile first
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-28
 **Drivers:** The user: "the TUI is confusing, it's hard to see what skills,
 agents and plugins are in a kit, it's hard to select what I want, it's hard to
