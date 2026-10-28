@@ -19,8 +19,9 @@ Claude Code plugin and starts `claude --plugin-dir …`, for that one process
 only. Nothing is written into the login's config directory, so one login can
 run with different kits in two terminals. ccs never runs on, or writes to,
 your stock `~/.claude`. The decisions are in
-[ADR-2610261212](docs/adrs/ADR-2610261212-profile-per-config-directory.md) and
-[ADR-2610261643](docs/adrs/ADR-2610261643-logins-kits-library-sync.md).
+[ADR-2610261212](docs/adrs/ADR-2610261212-profile-per-config-directory.md),
+[ADR-2610261643](docs/adrs/ADR-2610261643-logins-kits-library-sync.md) and, for
+the screen, [ADR-2610281305](docs/adrs/ADR-2610281305-profile-first-columns.md).
 
 ## Prerequisites
 
@@ -55,8 +56,12 @@ ccs import                           # copy ~/.claude's skills and agents into t
 ccs kit new net                      # a kit
 ccs kit use net skills/imported/     # what it holds: a folder, or single items
 ccs kit attach net claude-bedrock    # launch with it by default
+ccs loads claude-bedrock             # what it will load, kit by kit; builds nothing
 ccs claude-bedrock                   # Claude Code, on Bedrock, with kit net
 ```
+
+Or run `ccs` with no arguments and do the same on one screen (see **The TUI**
+below).
 
 Already used an earlier ccs, with `shared/` and a `native` profile? Run
 `ccs migrate` once. `ccs list` says so when it is needed.
@@ -107,17 +112,15 @@ ccs kit     list | new <k> | rm <k> | show <k> | edit <k> | rename <k> <new> | u
 An **entry** is `skills/<name>`, `agents/<name>`, `plugins/<name>`, or a folder
 such as `skills/net/` (everything under it, including what you add later).
 
-**The launch screen.** A bare `ccs` in a terminal shows your profiles with
-their provider (`bedrock claude-bedrock@us-east-1`, `anthropic`) and every kit
-with its item count. The resolved profile is preselected and its kits ticked,
-so one Enter starts it as usual. Space ticks other kits for this launch; `s`
-saves the ticks as that profile's default. `ccs <profile>` (with or without
-`+kit`) skips the screen, and so does anything run without a terminal.
+**Starting.** A bare `ccs` in a terminal opens the column screen (see **The
+TUI** below), on the profile it would launch; Enter on that profile starts it.
+`ccs <profile>` (with or without `+kit`) skips the screen. Without a terminal, a
+bare `ccs` launches the resolved profile.
 
 **Which profile runs.** The first of: the name you type, a `.claude-profile`
 file in the current directory or a parent, `$CCS_PROFILE`, the default. ccs
-sets no default by itself. With none of these, a bare `ccs` opens the picker
-in a terminal and is an error anywhere else; it never falls back to
+sets no default by itself. With none of these, a bare `ccs` opens the column
+screen in a terminal and is an error anywhere else; it never falls back to
 `~/.claude`.
 
 **The library.** Every skill and agent lives once, in
@@ -149,7 +152,10 @@ A plugin keeps its manifest name (`egm`, not the repository name) and its
 skill prefix (`egm:`). It is loaded as it is, with one more `--plugin-dir`;
 nothing is built. A local path wins over reading the source as `owner/repo`.
 The repository root must be the plugin: a marketplace whose plugins live in
-subfolders is not supported yet.
+subfolders is not supported yet. `ccs library show plugins/egm` lists the
+skills and agents inside it, under the names Claude Code shows. A kit cannot
+take a library plugin's name (`ccs kit new egm` is refused), because a kit is
+built as a plugin named after the kit and two plugins would share one name.
 
 **Kits.** `ccs kit use net skills/net/ agents/rev` picks from the library;
 `ccs kit edit net` writes the kit's instructions. At launch, each kit is
@@ -158,6 +164,13 @@ into the library (so edits are live), agents are copies (Claude Code does not
 read an agent through a link, so an agent edit applies from the next launch),
 and the instructions are appended to the system prompt. In Claude Code a kit's
 skills are named `<kit>:<skill>`, for example `/net:find-nqe-query`.
+
+`ccs kit show net` lists each of the kit's lines with the items it gives.
+`ccs loads work` does the same for everything a launch of `work` loads, with
+the totals and any warnings (a line the library no longer has; two agents in
+one kit with one name), and builds nothing. A kit's `uses` file is plain text
+you may edit: a save from ccs keeps your `#` comments and blank lines where
+they are, and replaces the file whole or not at all.
 
 **The TUI.** `ccs` (or `ccs ui`) opens one screen of four columns, used left
 to right (ADR-2610281305): **1 profile → 2 its kits → 3 what is in the kit →
@@ -186,7 +199,7 @@ the mouse      click a row to select it, again to act on it · click a [ ] box t
 With the mouse on, a plain drag no longer selects terminal text; hold Shift (or
 Option in some macOS terminals) to select.
 
-See [ADR-2610261643 §18](docs/adrs/ADR-2610261643-logins-kits-library-sync.md).
+See [ADR-2610281305](docs/adrs/ADR-2610281305-profile-first-columns.md).
 
 **MCP servers.** Per profile: `ccs bedrock-work mcp add -s user forward -- forward-mcp`.
 Per kit: put a plugin-format `.mcp.json` in `~/.claude-profiles/kits/<kit>/`.
@@ -262,6 +275,8 @@ src/
 tests/                                 — the gate: domain, profiles, kits, plugins, loads, migrate, upgrade, assets, boundaries, the TUI, TUI/CLI parity, the real binary
 .github/workflows/                     — CI (the gate on pushes to main and on pull requests) and Release (on a vX.Y.Z tag)
 docs/adrs/                             — decisions
+docs/designs/                          — the brainstorm brief behind ADR-2610281305
+tui_designs/                           — the three designs for the TUI, and the prototype's source
 start.sh                               — build and run, or --install
 ```
 
@@ -283,7 +298,7 @@ The code is hexagonal, built with [hexa](https://github.com/gaberger/hexa); see
 end to end. The gate is:
 
 ```bash
-cargo test && hexa analyze . --grade A+
+cargo test && cargo clippy --all-targets -- -D warnings && hexa analyze . --grade A+
 ```
 
 `A+` and not `A`: one boundary violation costs 10 points, which still grades
