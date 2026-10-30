@@ -40,6 +40,7 @@ impl Env {
             .env("CCS_HOME", self.root.join("profiles"))
             .env("CCS_CLAUDE_BIN", self.root.join("claude"))
             .env_remove("CCS_PROFILE")
+            .env_remove("CCS_KITS")
             .env_remove("VISUAL")
             .env_remove("EDITOR");
         // The shell running the tests may itself be on Bedrock; its provider
@@ -220,7 +221,7 @@ fn statusline_survives_a_missing_wrapped_script() {
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "⬡ work · anthropic │ ⚠ statusline failed: /nonexistent/sl.sh\n");
 }
 
-/// The status line every launch sets: the profile first, then the project's own line.
+/// The status line every launch sets: the segment, the profile's own line, then the project's.
 #[test]
 fn statusline_auto_puts_the_profile_before_the_projects_own_line() {
     let e = Env::new();
@@ -248,6 +249,9 @@ fn statusline_auto_puts_the_profile_before_the_projects_own_line() {
     let bare = e.root.join("bare");
     fs::create_dir_all(&bare).unwrap();
     assert_eq!(run(Some(&cfg), &bare), "⬡ work +base +dev · anthropic │ profile-line\n", "no project line: the profile's");
+    assert_eq!(run(Some(&cfg), &proj), "⬡ work +base +dev · anthropic │ profile-line\nmine\n", "both: the profile's, then the project's");
+    fs::write(cfg.join("settings.json"), line("echo mine")).unwrap();
+    assert_eq!(run(Some(&cfg), &proj), "⬡ work +base +dev · anthropic │ mine\n", "the same command runs once");
     assert_eq!(run(None, &bare), "⬡ work +base +dev · anthropic\n", "nothing else: the segment alone");
 }
 

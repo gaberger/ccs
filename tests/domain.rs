@@ -243,6 +243,24 @@ mod statusline {
         assert_eq!(status_segment(&v).as_deref(), Some("⬡ p · anthropic"));
     }
 
+    /// The segment must read in any terminal and font: no escape codes, and no
+    /// private-use glyphs (Nerd Font, powerline) that a plain font lacks.
+    #[test]
+    fn the_segment_is_plain_text_for_any_terminal() {
+        for vars in [
+            pairs(&[("CCS_PROFILE", "work"), ("CCS_KITS", "base,net")]),
+            pairs(&[("CCS_PROFILE", "w"), ("CLAUDE_CODE_USE_BEDROCK", "1"), ("AWS_PROFILE", "sso"), ("AWS_REGION", "us-east-1")]),
+            pairs(&[("CCS_PROFILE", "w"), ("ANTHROPIC_BASE_URL", "https://gw")]),
+        ] {
+            let out = compose_status(status_segment(&vars), &[Wrapped::Failed("/x".into()), Wrapped::Output("theirs".into())]);
+            let odd: Vec<char> = out
+                .chars()
+                .filter(|&c| (c.is_control() && c != '\n') || ('\u{E000}'..='\u{F8FF}').contains(&c) || c >= '\u{F0000}')
+                .collect();
+            assert!(odd.is_empty(), "{out:?} has {odd:?}");
+        }
+    }
+
     #[test]
     fn without_ccs_there_is_no_segment() {
         assert_eq!(status_segment(&pairs(&[("CLAUDE_CODE_USE_BEDROCK", "1")])), None);
@@ -251,21 +269,35 @@ mod statusline {
 
     #[test]
     fn wrapping_prefixes_only_the_first_line() {
-        let out = compose_status(Some("⬡ w".into()), Wrapped::Output("model · dir\nline two\n".into()));
+        let out = compose_status(Some("⬡ w".into()), &[Wrapped::Output("model · dir\nline two\n".into())]);
         assert_eq!(out, "⬡ w │ model · dir\nline two");
     }
 
     #[test]
     fn composing_handles_every_empty_side() {
-        assert_eq!(compose_status(Some("⬡ w".into()), Wrapped::Nothing), "⬡ w");
-        assert_eq!(compose_status(Some("⬡ w".into()), Wrapped::Output("\n".into())), "⬡ w");
-        assert_eq!(compose_status(None, Wrapped::Output("theirs\n".into())), "theirs");
-        assert_eq!(compose_status(None, Wrapped::Nothing), "");
+        assert_eq!(compose_status(Some("⬡ w".into()), &[Wrapped::Nothing]), "⬡ w");
+        assert_eq!(compose_status(Some("⬡ w".into()), &[Wrapped::Output("\n".into())]), "⬡ w");
+        assert_eq!(compose_status(None, &[Wrapped::Output("theirs\n".into())]), "theirs");
+        assert_eq!(compose_status(None, &[Wrapped::Nothing]), "");
+    }
+
+    /// The profile's own line and the project's both show, the profile's first.
+    #[test]
+    fn every_wrapped_line_shows_in_order() {
+        let w = |s: &str| Wrapped::Output(s.into());
+        assert_eq!(compose_status(Some("⬡ w".into()), &[w("pl1\npl2\n"), w("hexa\n")]), "⬡ w │ pl1\npl2\nhexa");
+        assert_eq!(compose_status(Some("⬡ w".into()), &[Wrapped::Nothing, w("hexa\n")]), "⬡ w │ hexa");
+        assert_eq!(compose_status(Some("⬡ w".into()), &[w("\n"), w("hexa")]), "⬡ w │ hexa", "an empty line is skipped");
+        assert_eq!(
+            compose_status(Some("⬡ w".into()), &[Wrapped::Failed("/x/sl.sh".into()), w("hexa")]),
+            "⬡ w │ ⚠ statusline failed: /x/sl.sh\nhexa"
+        );
+        assert_eq!(compose_status(None, &[w("a"), w("b")]), "a\nb");
     }
 
     #[test]
     fn a_failed_wrapped_command_is_named_not_hidden() {
-        let out = compose_status(Some("⬡ w".into()), Wrapped::Failed("/x/sl.sh".into()));
+        let out = compose_status(Some("⬡ w".into()), &[Wrapped::Failed("/x/sl.sh".into())]);
         assert_eq!(out, "⬡ w │ ⚠ statusline failed: /x/sl.sh");
     }
 

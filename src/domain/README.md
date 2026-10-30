@@ -114,7 +114,8 @@ The ADRs cited below live in `docs/adrs/` at the repository root.
   `⬡ work +net · bedrock sso@us-east-1`. Returns `None` when `CCS_PROFILE` is not
   set.
 - `Wrapped` (`Nothing`, `Output`, `Failed`) and
-  `compose_status(Option<String>, Wrapped) -> String`.
+  `compose_status(Option<String>, &[Wrapped]) -> String`: the segment, then each
+  non-empty output in order.
 - `settings_statusline(&str)`, `next_statusline(&[Option<String>])`,
   `statusline_dir(&str)`: pick which status line runs after the segment, and in
   which folder.
@@ -173,7 +174,8 @@ The ADRs cited below live in `docs/adrs/` at the repository root.
 - **Launch plan.** `plan_launch` always unsets every `PROVIDER_VARS` entry, then
   sets the profile's variables, then `CLAUDE_CONFIG_DIR` and `CCS_PROFILE`, in
   that order. `with_kits` puts kit arguments before the user's arguments, and
-  sets `CCS_KITS` only when at least one kit is chosen.
+  sets `CCS_KITS` only when at least one kit is chosen; with none it unsets it, so
+  a launch from inside a session does not inherit that session's kits.
 - **Shell output is quoted.** `render_exports` single-quotes every value, so
   `eval` cannot run anything inside one.
 - **Command parsing.** A first word that names a profile launches it. Leading

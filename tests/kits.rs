@@ -116,6 +116,7 @@ impl Env {
             .env("CCS_HOME", self.home())
             .env("CCS_CLAUDE_BIN", self.root.join("claude"))
             .env_remove("CCS_PROFILE")
+            .env_remove("CCS_KITS")
             .env_remove("VISUAL")
             .env_remove("EDITOR");
         for v in ccs::domain::PROVIDER_VARS {
@@ -266,6 +267,9 @@ fn a_new_profile_launches_with_no_kits() {
     let (argv, out) = e.launched(&["work"]);
     assert!(!argv.iter().any(|a| a == "--plugin-dir"), "{argv:?}");
     assert_eq!(var(&out, "CCS_KITS"), None);
+    // Launched from inside a session that has kits, the kits are not inherited.
+    let out = String::from_utf8(e.ccs(&["work"]).env("CCS_KITS", "net").output().unwrap().stdout).unwrap();
+    assert_eq!(var(&out, "CCS_KITS"), None, "a parent session's kits leaked into the status line");
 }
 
 #[test]

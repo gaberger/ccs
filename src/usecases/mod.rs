@@ -270,29 +270,31 @@ pub fn upgrade(rel: &dyn Releases, current: &str, target: Option<&str>, wanted: 
     Ok(Upgraded::Installed { from: current.into(), to: version, at: installed? })
 }
 
-/// `ccs statusline --auto`, the status line every launch sets: the segment, then
-/// the first other status line of the project's local settings, its shared
-/// settings, or the profile's settings, run with the same stdin.
+/// `ccs statusline --auto`, the status line every launch sets: the segment,
+/// then the profile's own status line, then the project's (its local settings
+/// before its shared ones), each run with the same stdin. A command both name
+/// runs once.
 pub fn statusline_auto(runner: &dyn CommandRunner, files: &dyn TextFiles, vars: &[(String, String)], stdin: &[u8]) -> String {
     let payload = String::from_utf8_lossy(stdin);
-    let mut places = Vec::new();
-    if let Some(dir) = statusline_dir(&payload) {
+    let command = |p: PathBuf| files.read(&p).and_then(|t| settings_statusline(&t));
+    let project = statusline_dir(&payload).and_then(|dir| {
         let dir = Path::new(&dir).join(".claude");
-        places.push(dir.join("settings.local.json"));
-        places.push(dir.join("settings.json"));
-    }
-    if let Some((_, cfg)) = vars.iter().find(|(k, v)| k == "CLAUDE_CONFIG_DIR" && !v.is_empty()) {
-        places.push(Path::new(cfg).join("settings.json"));
-    }
-    let commands: Vec<Option<String>> = places.iter().map(|p| files.read(p).and_then(|t| settings_statusline(&t))).collect();
-    let wrapped = match next_statusline(&commands) {
-        None => Wrapped::Nothing,
-        Some(cmd) => match runner.run(&["/bin/sh".into(), "-c".into(), cmd.clone()], stdin) {
+        next_statusline(&[command(dir.join("settings.local.json")), command(dir.join("settings.json"))])
+    });
+    let profile = vars
+        .iter()
+        .find(|(k, v)| k == "CLAUDE_CONFIG_DIR" && !v.is_empty())
+        .and_then(|(_, cfg)| next_statusline(&[command(Path::new(cfg).join("settings.json"))]));
+    let mut commands: Vec<String> = profile.into_iter().collect();
+    commands.extend(project.filter(|p| !commands.contains(p)));
+    let wrapped: Vec<Wrapped> = commands
+        .into_iter()
+        .map(|cmd| match runner.run(&["/bin/sh".into(), "-c".into(), cmd.clone()], stdin) {
             Some(out) => Wrapped::Output(out),
             None => Wrapped::Failed(cmd),
-        },
-    };
-    compose_status(status_segment(vars), wrapped)
+        })
+        .collect();
+    compose_status(status_segment(vars), &wrapped)
 }
 
 /// The status line (ADR-2610261237): the segment, in front of a wrapped command's output.
@@ -305,7 +307,7 @@ pub fn statusline(runner: &dyn CommandRunner, vars: &[(String, String)], stdin: 
             None => Wrapped::Failed(wrap.join(" ")),
         }
     };
-    compose_status(status_segment(vars), wrapped)
+    compose_status(status_segment(vars), &[wrapped])
 }
 
 /// Give a profile the `ccs` status line, unless it already has a `settings.json`.

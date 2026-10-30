@@ -50,7 +50,7 @@ All items live in `mod.rs` (`crate::usecases`).
 | Symbol | Purpose |
 |---|---|
 | `statusline(runner, vars, stdin, wrap)` | The `ccs` segment followed by the output of the explicit `wrap` command. |
-| `statusline_auto(runner, files, vars, stdin)` | `ccs statusline --auto`. Runs the first other status line it finds in the project's `.claude/settings.local.json`, then the project's `.claude/settings.json`, then `$CLAUDE_CONFIG_DIR/settings.json`. The command runs through `/bin/sh -c` with the same stdin. |
+| `statusline_auto(runner, files, vars, stdin)` | `ccs statusline --auto`. Runs the profile's status line (`$CLAUDE_CONFIG_DIR/settings.json`), then the project's (`.claude/settings.local.json`, else `.claude/settings.json`); a command both name runs once. Each runs through `/bin/sh -c` with the same stdin. |
 
 ### AWS / import / migrate
 

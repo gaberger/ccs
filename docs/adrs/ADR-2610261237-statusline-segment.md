@@ -101,3 +101,25 @@ claude-bedrock-gary@us-east-1 │ ⬡ Loop (ccs): nothing recorded…`.
 
 - ADR-2610261212 — one config directory per profile
 - Claude Code status line: https://docs.claude.com/en/docs/claude-code/statusline
+
+## 3. The profile's line and the project's both show (decided 2026-10-30)
+
+The user: "where are the ccs updates on the status line". Found: the profile's
+`settings.json` was switched to a two-line powerline
+(`~/.claude/statusline-host.sh`), and in this repository it never ran. §2 runs
+only the *first* status line it finds, and hexa's project line comes before the
+profile's, so every hexa project hid the profile's line.
+
+- `--auto` now runs the profile's own status line, then the project's (local
+  settings before shared), each with the same stdin. The segment goes before
+  the first output line; the rest follow in order. An empty output is left out.
+- A command that both the profile and the project name runs once.
+- A failure in one is named in its place (§1 rule 3); the other still shows.
+- What ccs prints itself stays plain text for any terminal and font: no escape
+  codes, no private-use glyphs (Nerd Font, powerline). Styling belongs to the
+  user's own line, which ccs runs and passes through unchanged. Guarded by
+  `the_segment_is_plain_text_for_any_terminal`.
+- Found on the way: a launch with no kits left `CCS_KITS` alone, so a profile
+  launched from inside a kit session showed that session's kits. `with_kits`
+  now unsets it when no kit is chosen.
+- Gate: `cargo test --test cli statusline_auto && cargo test --test domain status && cargo clippy --all-targets -- -D warnings`.

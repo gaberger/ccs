@@ -259,10 +259,10 @@ would, or execs `$SHELL` for `Shell`.
 Every launch passes `--settings` with a status line of
 `ccs statusline --auto`. Command-line settings outrank a project's, so the
 profile segment (`⬡ work +net · bedrock …`) always shows. `statusline_auto`
-then finds the first other status line command, looking in the project's local
-settings, then its shared settings, then the profile's. It runs that command
-with the same stdin and prints its first line after the segment
-(ADR-2610261237).
+then runs the profile's own status line command, then the project's (its local
+settings before its shared ones), each with the same stdin. The first output
+line follows the segment and the rest follow in order; a command both name runs
+once (ADR-2610261237 §3).
 
 ## Releases and upgrade
 

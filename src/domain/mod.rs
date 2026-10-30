@@ -221,7 +221,7 @@ pub enum Command {
     Which,
     Help,
     Statusline { wrap: Vec<String> },
-    /// The status line a launch sets: the segment, then the project's or profile's own line.
+    /// The status line a launch sets: the segment, the profile's own line, then the project's.
     StatuslineAuto,
     /// Install a release over the running binary; `check` only says what is available.
     Upgrade { version: Option<String>, check: bool },
@@ -977,8 +977,11 @@ pub fn kit_args(plugin_dirs: &[PathBuf], prompt: Option<&std::path::Path>) -> Ve
 }
 
 /// Add the kits to a launch plan: their arguments go before the user's, and `CCS_KITS` names them.
+/// With no kits it is unset, so a launch from inside a session does not inherit that session's.
 pub fn with_kits(mut plan: LaunchPlan, kits: &[KitName], kit_args: Vec<String>) -> LaunchPlan {
-    if !kits.is_empty() {
+    if kits.is_empty() {
+        plan.unset.push("CCS_KITS".into());
+    } else {
         let names: Vec<&str> = kits.iter().map(KitName::as_str).collect();
         plan.set.push(("CCS_KITS".into(), names.join(",")));
     }
@@ -1136,13 +1139,19 @@ pub enum Wrapped {
     Failed(String),
 }
 
-/// Put the segment in front of the first line of the wrapped output.
-pub fn compose_status(segment: Option<String>, wrapped: Wrapped) -> String {
-    let theirs = match wrapped {
-        Wrapped::Nothing => String::new(),
-        Wrapped::Output(s) => s.trim_end().to_string(),
-        Wrapped::Failed(cmd) => format!("⚠ statusline failed: {cmd}"),
-    };
+/// Put the segment in front of the first line of the wrapped outputs, which
+/// follow one another in order. An output with nothing in it is left out.
+pub fn compose_status(segment: Option<String>, wrapped: &[Wrapped]) -> String {
+    let theirs = wrapped
+        .iter()
+        .map(|w| match w {
+            Wrapped::Nothing => String::new(),
+            Wrapped::Output(s) => s.trim_end().to_string(),
+            Wrapped::Failed(cmd) => format!("⚠ statusline failed: {cmd}"),
+        })
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
     match (segment, theirs.is_empty()) {
         (Some(seg), true) => seg,
         (Some(seg), false) => format!("{seg} │ {theirs}"),
@@ -1345,7 +1354,7 @@ A launch is a profile plus kits. Nothing starts until you choose a profile.
   ccs which                      print the resolved profile
   ccs ui                         browse profiles, kits and the library; launch from the list
   ccs statusline [-- <cmd…>]     status line segment; wraps an existing status line command
-  ccs statusline --auto          what every launch sets: the segment, then the project's or profile's own status line
+  ccs statusline --auto          what every launch sets: the segment, the profile's own status line, then the project's
   ccs import                     copy ~/.claude skills, agents, CLAUDE.md into the library (kit 'imported')
   ccs import aws [<p>…] [--all] [--region <r>]
                                  list AWS CLI profiles, or import them as Bedrock profiles

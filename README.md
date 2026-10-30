@@ -93,7 +93,7 @@ ccs loads [<name>]             what a profile loads: each kit, line and item; bu
 ccs which                      print the resolved profile
 ccs ui                         the same screen, from anywhere
 ccs statusline [-- <cmd…>]     status line segment; wraps an existing status line command
-ccs statusline --auto          what every launch sets: the segment, then the project's or profile's own status line
+ccs statusline --auto          what every launch sets: the segment, the profile's own status line, then the project's
 ccs import                     copy ~/.claude skills, agents, CLAUDE.md into the library (kit 'imported')
 ccs import aws [<p>…] [--all] [--region <r>]
                                list AWS CLI profiles, or import them as Bedrock profiles
@@ -222,10 +222,11 @@ profiles are skipped, never overwritten. See
 the status line, for example
 `⬡ claude-bedrock +net · bedrock claude-bedrock@us-east-1`. ccs passes
 `--settings` with the status line `ccs statusline --auto`, which ranks above a
-project's own. `--auto` prints the segment, then runs the first other status
-line it finds in the project's `.claude/settings.local.json`, the project's
-`.claude/settings.json`, or the profile's `config/settings.json`. A status line
-script you already have keeps working, with nothing to wrap.
+project's own. `--auto` prints the segment, then runs the profile's own status
+line (`config/settings.json`), then the project's (`.claude/settings.local.json`,
+else `.claude/settings.json`), each on its own lines. A status line script you
+already have keeps working, with nothing to wrap, and a project's line such as
+hexa's does not hide it.
 
 To wrap a command by hand, for example in a settings file that ccs does not
 launch:
