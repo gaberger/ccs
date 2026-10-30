@@ -123,3 +123,17 @@ profile's, so every hexa project hid the profile's line.
   launched from inside a kit session showed that session's kits. `with_kits`
   now unsets it when no kit is chosen.
 - Gate: `cargo test --test cli statusline_auto && cargo test --test domain status && cargo clippy --all-targets -- -D warnings`.
+
+## 4. The segment is not drawn twice (decided 2026-10-30)
+
+The user: "the status line looks like a giant runon sentence". Found: the
+profile's own line (`statusline-host.sh`) calls `ccs statusline` and draws
+`⬡ <profile> <provider>` as one of its segments, and §3 put the full ccs
+segment in front of it, so line 1 named the profile three times.
+
+- `compose_status` leaves the segment out when a wrapped output already
+  contains its head, `⬡ <profile>`, followed by something that cannot continue a
+  profile name (end, space, escape code). `⬡ workshop` and `/home/work` do not
+  count for `work`.
+- Gate: `cargo test --test domain compose_status`
+  (`composing_compose_status_skips_a_segment_already_shown`).

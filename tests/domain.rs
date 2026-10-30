@@ -281,6 +281,18 @@ mod statusline {
         assert_eq!(compose_status(None, &[Wrapped::Nothing]), "");
     }
 
+    /// A wrapped line that already draws the segment's head (`⬡ <profile>`, as a
+    /// profile script that calls `ccs statusline` does) is not given it twice.
+    #[test]
+    fn composing_compose_status_skips_a_segment_already_shown() {
+        let seg = || Some("⬡ work +base · bedrock work@us-east-1".to_string());
+        let pl = "\x1b[48;5;61m Claude \x1b[48;5;235m\x1b[38;5;109m ⬡ work\x1b[38;5;244m bedrock@us-east-1 \x1b[0m\nhost · dir\n";
+        assert_eq!(compose_status(seg(), &[Wrapped::Output(pl.into()), Wrapped::Output("hexa".into())]), format!("{}\nhexa", pl.trim_end()));
+        // A profile name that is only a prefix of a shown one, or a path, does not count.
+        assert_eq!(compose_status(seg(), &[Wrapped::Output("⬡ workshop".into())]), "⬡ work +base · bedrock work@us-east-1 │ ⬡ workshop");
+        assert_eq!(compose_status(seg(), &[Wrapped::Output("/home/work/x".into())]), "⬡ work +base · bedrock work@us-east-1 │ /home/work/x");
+    }
+
     /// The profile's own line and the project's both show, the profile's first.
     #[test]
     fn every_wrapped_line_shows_in_order() {

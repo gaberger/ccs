@@ -1140,8 +1140,19 @@ pub enum Wrapped {
 }
 
 /// Put the segment in front of the first line of the wrapped outputs, which
-/// follow one another in order. An output with nothing in it is left out.
+/// follow one another in order. An output with nothing in it is left out. The
+/// segment is left out too when an output already draws its head (`⬡ <profile>`),
+/// as a profile script that calls `ccs statusline` itself does.
 pub fn compose_status(segment: Option<String>, wrapped: &[Wrapped]) -> String {
+    let shown = |head: &str| {
+        wrapped.iter().any(|w| match w {
+            Wrapped::Output(s) => s.match_indices(head).any(|(i, _)| {
+                !s[i + head.len()..].chars().next().is_some_and(|c| c.is_alphanumeric() || "-_.".contains(c))
+            }),
+            _ => false,
+        })
+    };
+    let segment = segment.filter(|seg| !shown(&seg.split(' ').take(2).collect::<Vec<_>>().join(" ")));
     let theirs = wrapped
         .iter()
         .map(|w| match w {

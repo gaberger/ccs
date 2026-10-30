@@ -223,6 +223,21 @@
       ],
       "updated": "2026-10-26T18:37:12.248539+00:00"
     },
+    "ce6add00-a3ec-4129-95fd-522ae63a822c": {
+      "files": [
+        "tests/domain.rs",
+        "src/domain/mod.rs",
+        "/Volumes/Crucial/projects/hexa/docs/specs/ADR-2610301330.json",
+        "/Volumes/Crucial/projects/hexa/docs/adrs/ADR-2610301330-the-status-bar-gets-a-glance-not-a-paragraph.md",
+        "/Volumes/Crucial/projects/hexa/hexa-cli/tests/adr_2610301330_spec.rs",
+        "/tmp/hexa-guides/ADR-2610301500-a-dead-end-gives-a-guide-and-records-the-gap.md"
+      ],
+      "gate": "cargo test --test domain compose_status 2>&1 | grep -E \"test result: ok. [1-9]\"",
+      "pid": 40118,
+      "pid_start": null,
+      "stage": "gate",
+      "updated": "2026-10-30T14:29:16.377905+00:00"
+    },
     "ea311e23-ea0f-4a4f-89e6-4b7e1d4fcf19": {
       "adr": "ADR-2610261933",
       "evidence": "cargo test 2>&1 | grep \"test result\" && hexa analyze . --grade A+ 2>&1 | grep \"Architecture grade\"",
