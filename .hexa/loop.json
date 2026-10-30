@@ -230,13 +230,19 @@
         "/Volumes/Crucial/projects/hexa/docs/specs/ADR-2610301330.json",
         "/Volumes/Crucial/projects/hexa/docs/adrs/ADR-2610301330-the-status-bar-gets-a-glance-not-a-paragraph.md",
         "/Volumes/Crucial/projects/hexa/hexa-cli/tests/adr_2610301330_spec.rs",
-        "/tmp/hexa-guides/ADR-2610301500-a-dead-end-gives-a-guide-and-records-the-gap.md"
+        "/tmp/hexa-guides/ADR-2610301500-a-dead-end-gives-a-guide-and-records-the-gap.md",
+        "/Volumes/Crucial/projects/hexa/hexa-cli/tests/adr_2610301500_spec.rs",
+        "/Volumes/Crucial/projects/hexa/hexa-exec/src/local_store.rs",
+        "/Volumes/Crucial/projects/hexa/hexa-cli/src/commands/gap.rs",
+        "/Volumes/Crucial/projects/hexa/hexa-cli/assets/templates/claude-md-hexa-section.md",
+        "/Volumes/Crucial/projects/hexa/hexa-core/src/domain/guide.rs",
+        "/Volumes/Crucial/projects/hexa/.github/workflows/ci.yml"
       ],
       "gate": "cargo test --test domain compose_status 2>&1 | grep -E \"test result: ok. [1-9]\"",
       "pid": 40118,
       "pid_start": null,
       "stage": "gate",
-      "updated": "2026-10-30T14:29:16.377905+00:00"
+      "updated": "2026-10-30T16:26:25.893024+00:00"
     },
     "ea311e23-ea0f-4a4f-89e6-4b7e1d4fcf19": {
       "adr": "ADR-2610261933",

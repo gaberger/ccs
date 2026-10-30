@@ -164,7 +164,7 @@
     ]
   },
   "statusLine": {
-    "command": "hexa loop 2>/dev/null | head -1",
+    "command": "hexa loop line 2>/dev/null",
     "type": "command"
   }
 }
