@@ -24,12 +24,12 @@ pub mod usecases;
 
 use adapters::secondary::{
     aws_cli::AwsCli, exec_launcher::ExecLauncher, fs_kits::FsKitStore, fs_legacy::FsLegacy, fs_library::FsLibrary,
-    fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, fs_text::FsText, gh_releases::GhReleases, git_fetcher::GitFetcher,
-    process_editor::ProcessEditor, process_runner::ProcessRunner,
+    fs_history::FsHistory, fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, fs_text::FsText, gh_releases::GhReleases, git_fetcher::GitFetcher,
+    process_editor::ProcessEditor, process_runner::ProcessRunner, tty_typer::TtyTyper,
 };
 use adapters::primary::tui;
 use domain::{
-    library_tree, parse_command, CcsError, Command, Finding, Kind, KitCmd, LibraryCmd, ProfileName, HELP,
+    command_line, library_tree, parse_command, CcsError, Command, Finding, Kind, KitCmd, LibraryCmd, ProfileName, HELP,
 };
 use ports::{Launcher, ProfileStore};
 use std::io::{IsTerminal, Read};
@@ -68,6 +68,16 @@ pub fn fetcher() -> impl ports::Fetcher {
 /// The editor `ccs … edit` and the TUI's `e` open: `$VISUAL`, else `$EDITOR`, else `vi`.
 pub fn editor() -> impl ports::Editor {
     ProcessEditor::new(&var("VISUAL").or_else(|| var("EDITOR")).unwrap_or_else(|| "vi".into()))
+}
+
+/// The history file of `shell` (`$SHELL`), under `home` unless `histfile` says otherwise.
+pub fn history(shell: &str, home: &std::path::Path, histfile: Option<PathBuf>) -> impl ports::History {
+    FsHistory::for_shell(shell, home, histfile)
+}
+
+/// Types into the terminal this process was started from.
+pub fn typer() -> impl ports::Typer {
+    TtyTyper
 }
 
 /// Looks for `.claude-profile` in `start` and its parents.
@@ -130,6 +140,19 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
         claude_available,
         current,
     };
+    // A launch chosen in the menu is shown, and filed in the shell's history,
+    // as the line that would have launched it (ADR-2610281500).
+    let hist = history(&var("SHELL").unwrap_or_default(), &user_home, var("HISTFILE").map(PathBuf::from));
+    // Typed into the terminal, the shell runs the line and files it itself, so
+    // ccs ends here. If the terminal refuses, ccs launches directly and files the line.
+    let typed = |line: &str| -> bool {
+        if ports::Typer::type_line(&typer(), line) {
+            return true;
+        }
+        eprintln!("$ {line}");
+        ports::History::record(&hist, line);
+        false
+    };
     // The column screen (ADR-2610281305); `args` go to claude on a launch.
     let ui = |current: Option<String>, args: Vec<String>| -> Result<i32, CcsError> {
         if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
@@ -140,10 +163,16 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             // The terminal is restored by now; launch exactly as `ccs <name>` does.
             tui::Exit::Launch(n) => {
                 let name = usecases::existing(&store, &n)?;
+                if typed(&command_line(name.as_str(), None, &args)) {
+                    return Ok(0);
+                }
                 launch(&usecases::prepare_launch(&store, &kits, &lib, &name, None, args, &ccs_bin())?, &launcher)
             }
             tui::Exit::LaunchWith { profile, kits: picked } => {
                 let name = usecases::existing(&store, &profile)?;
+                if typed(&command_line(name.as_str(), Some(&picked), &args)) {
+                    return Ok(0);
+                }
                 launch(&usecases::prepare_launch(&store, &kits, &lib, &name, Some(picked), args, &ccs_bin())?, &launcher)
             }
             tui::Exit::Shell(n) => {

@@ -1,5 +1,12 @@
 {
   "sessions": {
+    "2188ac58-6b42-406d-8274-6107f76a8717": {
+      "gate": "cargo test 2>&1 | grep -E \"^test result\" | grep -vq FAILED && cargo build -q && python3 -I tests/typed_launch.py target/debug/ccs",
+      "pid": 97599,
+      "pid_start": null,
+      "stage": "gate",
+      "updated": "2026-11-08T00:06:29.877992+00:00"
+    },
     "6a3d646e-4989-4530-afa4-82d2819a5889": {
       "adr": "ADR-2610281305",
       "files": [

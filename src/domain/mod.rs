@@ -240,6 +240,25 @@ fn launch_with_kits(profile: Option<String>, rest: &[String]) -> Command {
     Command::Launch { profile, kits, args: rest[n..].to_vec() }
 }
 
+/// The line that launches the same thing from a shell: `ccs work +net --allow-all`.
+/// Arguments are single-quoted when they need it, so the line runs as written.
+pub fn command_line(profile: &str, kits: Option<&[String]>, args: &[String]) -> String {
+    fn word(s: &str) -> String {
+        let plain = !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+        if plain { s.to_string() } else { format!("'{}'", s.replace('\'', "'\\''")) }
+    }
+    let mut out = format!("ccs {}", word(profile));
+    for k in kits.unwrap_or_default() {
+        out.push(' ');
+        out.push_str(&word(&format!("+{k}")));
+    }
+    for a in args {
+        out.push(' ');
+        out.push_str(&word(a));
+    }
+    out
+}
+
 // ── Skills and agents ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

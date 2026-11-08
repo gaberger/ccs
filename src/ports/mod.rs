@@ -184,6 +184,20 @@ pub trait PinLocator {
     fn pinned(&self) -> Option<String>;
 }
 
+/// The shell's command history (ADR-2610281500).
+pub trait History {
+    /// Append `line` as if it had been typed. False when the shell is not one
+    /// ccs knows, or the file cannot be written; the launch goes on either way.
+    fn record(&self, line: &str) -> bool;
+}
+
+/// Puts a line in the terminal's input, so the shell reads it as typed (ADR-2610281500 §2).
+pub trait Typer {
+    /// False when there is no terminal, the terminal refuses, or `line` holds a
+    /// control character. Nothing is typed then.
+    fn type_line(&self, line: &str) -> bool;
+}
+
 /// Starts Claude Code.
 pub trait Launcher {
     fn available(&self) -> bool;
