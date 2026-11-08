@@ -269,7 +269,7 @@ once (ADR-2610261237 §3).
 A `vX.Y.Z` tag runs `.github/workflows/release.yml`, which builds archives for
 macOS (aarch64, x86_64) and Linux (x86_64) and publishes them with
 `SHA256SUMS.txt`. `usecases::upgrade` downloads the archive for this platform
-through `Releases` (the `gh` CLI, since the repository is private). It installs
+through `Releases` (the `gh` CLI). It installs
 the new binary over the running one only if all of these hold:
 
 - the checksum matches the published one

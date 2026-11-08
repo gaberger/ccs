@@ -112,7 +112,7 @@ themselves.
   folder (`ccs-clone-*`, `ccs-upgrade-*`). Replaces the running `ccs`
   executable on upgrade.
 - **Processes:** runs `aws`, `git` (network: clone and pull), `gh` (network:
-  release view and download from the private repo, default `gaberger/ccs`),
+  release view and download, default `gaberger/ccs`),
   `tar`, `shasum` / `sha256sum`, the downloaded `ccs version`, the user's
   editor (in the foreground, attached to the terminal) and the status-line
   command.

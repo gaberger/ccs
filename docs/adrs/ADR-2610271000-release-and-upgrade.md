@@ -109,3 +109,12 @@ private, so its releases need a GitHub login to download.
 
 - ADR-2610261212 — one config directory per profile (the first ADR)
 - hexa releases: https://github.com/gaberger/hexa/releases
+
+## Note, 2026-11-07: the repository is public
+
+The text above was written while `gaberger/ccs` was private; it is kept as
+history. The repository is now public, so releases download without a login.
+`ccs upgrade` still uses `gh`, which reads public releases, so nothing in the
+code changed. Dropping the `gh` dependency (plain HTTPS plus `SHA256SUMS.txt`)
+would be a new decision and needs its own ADR. CI minutes are free for public
+repositories, so the cost note above no longer applies.

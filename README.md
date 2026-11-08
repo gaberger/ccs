@@ -27,7 +27,7 @@ the screen, [ADR-2610281305](docs/adrs/ADR-2610281305-profile-first-columns.md).
 
 - Claude Code (`claude` on your PATH), with `--plugin-dir`
 - macOS (Apple silicon or Intel) or Linux (x86_64) for a release; any Unix from source
-- From a release: the GitHub CLI, `gh`, logged in (the repository is private)
+- From a release: the GitHub CLI, `gh` (`ccs upgrade` and the install line below use it)
 - From source: Rust 1.89+ (`cargo`): kit saves take a file lock with `std::fs::File::lock`, stable since 1.89 (`ratatui` 0.30 needs 1.88)
 
 ## Install
@@ -374,3 +374,7 @@ TUI and the code that touches files, `git`, `gh`, `aws` and `claude`.
 
 - Run: `cargo test`
 - Then: `cargo clippy --all-targets -- -D warnings` and `hexa analyze . --grade A+ --exit-code`
+
+## License
+
+MIT. See [LICENSE](LICENSE).
