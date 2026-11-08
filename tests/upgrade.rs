@@ -1,5 +1,5 @@
 //! Gate for ADR-2610271000 §2: `ccs upgrade`. The pure rules are tested
-//! directly; the rest upgrades a copy of the real binary, with a fake `gh`
+//! directly; the rest upgrades a copy of the real binary, with a fake `curl`
 //! that serves release archives built here.
 
 use ccs::domain::{checksum_for, newer_version, parse_command, release_asset, release_target, Command, VERSION};
@@ -72,18 +72,20 @@ impl Env {
         }
         // The binary under test is a copy, so the real one is never replaced.
         fs::copy(env!("CARGO_BIN_EXE_ccs"), root.join("bin/ccs")).unwrap();
-        // A fake gh: `release view` prints rel/latest; `release download TAG -p A -D DIR` copies rel/TAG/A.
+        // A fake curl, as `ccs upgrade` calls it (no gh, no login; ADR-2610281600):
+        //   -o /dev/null -w %{url_effective} .../releases/latest  -> prints .../releases/tag/<rel/latest>
+        //   -o FILE .../releases/download/TAG/ASSET                -> copies rel/TAG/ASSET to FILE, else exit 22
         script(
-            &root.join("gh"),
-            r#"case "$1 $2" in
-"release view") cat "$FAKE_REL/latest" ;;
-"release download")
-  tag=$3; shift 3; dir=""; pats=""
-  while [ $# -gt 0 ]; do case "$1" in -D) dir=$2; shift 2 ;; -p) pats="$pats $2"; shift 2 ;; *) shift ;; esac; done
-  [ -d "$FAKE_REL/$tag" ] || { echo "release not found" >&2; exit 1; }
-  mkdir -p "$dir"
-  for p in $pats; do cp "$FAKE_REL/$tag/$p" "$dir/" || { echo "no asset matches $p" >&2; exit 1; }; done ;;
-*) echo "fake gh: $*" >&2; exit 2 ;;
+            &root.join("curl"),
+            r#"out=""; url=""
+while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; -w) shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac; done
+case "$url" in
+*/releases/latest) printf '%s' "${url%/latest}/tag/$(cat "$FAKE_REL/latest")" ;;
+*/releases/download/*)
+  rest=${url#*/releases/download/}; tag=${rest%%/*}; name=${rest#*/}
+  [ -f "$FAKE_REL/$tag/$name" ] || { echo "curl: (22) 404 $url" >&2; exit 22; }
+  cp "$FAKE_REL/$tag/$name" "$out" ;;
+*) echo "fake curl: $url" >&2; exit 2 ;;
 esac"#,
         );
         Env { root }
@@ -107,19 +109,19 @@ esac"#,
     fn latest(&self, version: &str) {
         fs::write(self.root.join("rel/latest"), format!("v{version}\n")).unwrap();
     }
-    fn run_with(&self, gh: &Path, a: &[&str]) -> Output {
+    fn run_with(&self, curl: &Path, a: &[&str]) -> Output {
         Proc::new(self.bin())
             .args(a)
             .env("HOME", self.root.join("home"))
             .env("CCS_HOME", self.root.join("home/.claude-profiles"))
-            .env("CCS_GH_BIN", gh)
+            .env("CCS_CURL_BIN", curl)
             .env("FAKE_REL", self.root.join("rel"))
             .env("TMPDIR", self.root.join("tmp"))
             .output()
             .unwrap()
     }
     fn run(&self, a: &[&str]) -> Output {
-        self.run_with(&self.root.join("gh"), a)
+        self.run_with(&self.root.join("curl"), a)
     }
     fn says(&self, a: &[&str]) -> (bool, String) {
         let out = self.run(a);
@@ -266,10 +268,32 @@ fn a_new_binary_whose_version_only_starts_the_same_is_not_installed() {
 }
 
 #[test]
-fn without_gh_upgrade_says_how_to_get_it() {
+fn upgrade_needs_curl_and_nothing_else() {
     let e = Env::new();
-    let out = e.run_with(Path::new("/nonexistent/gh"), &["upgrade"]);
+    let out = e.run_with(Path::new("/nonexistent/curl"), &["upgrade"]);
     let text = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success() && text.contains("gh auth login"), "{text}");
+    assert!(!out.status.success() && text.contains("curl") && !text.contains("gh"), "{text}");
     assert_eq!(e.version(), format!("ccs {VERSION}"));
+}
+
+#[test]
+fn upgrade_never_runs_gh() {
+    // A gh that records being called: the upgrade must not touch it.
+    let e = Env::new();
+    let marker = e.root.join("gh-was-called");
+    script(&e.root.join("bin/gh"), &format!("touch '{}'; exit 1", marker.display()));
+    e.publish("9.9.9", "echo 'ccs 9.9.9'", true);
+    e.latest("9.9.9");
+    let out = Proc::new(e.bin())
+        .arg("upgrade")
+        .env("HOME", e.root.join("home"))
+        .env("CCS_HOME", e.root.join("home/.claude-profiles"))
+        .env("CCS_CURL_BIN", e.root.join("curl"))
+        .env("FAKE_REL", e.root.join("rel"))
+        .env("TMPDIR", e.root.join("tmp"))
+        .env("PATH", format!("{}:{}", e.root.join("bin").display(), std::env::var("PATH").unwrap()))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!marker.exists(), "gh was run");
 }

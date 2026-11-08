@@ -5,6 +5,7 @@
 
 pub mod aws_cli;
 pub mod exec_launcher;
+pub mod curl_releases;
 pub mod fs_kits;
 pub mod fs_legacy;
 pub mod fs_library;
@@ -13,7 +14,6 @@ pub mod fs_history;
 pub mod fs_pins;
 pub mod fs_store;
 pub mod fs_text;
-pub mod gh_releases;
 pub mod git_fetcher;
 pub mod process_editor;
 pub mod process_runner;

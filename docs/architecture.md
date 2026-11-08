@@ -19,7 +19,7 @@ The code is hexagonal, and `hexa analyze .` checks the boundaries:
             ports             traits: ProfileStore, Library, KitStore, Launcher, Browser, …
            ↗     ↖            (and re-exports of the domain types adapters need)
      usecases     adapters    usecases: one function per command, plus App
-           ↖     ↗            adapters: filesystem, processes, git, gh, aws, the TUI
+           ↖     ↗            adapters: filesystem, processes, git, curl, aws, the TUI
             lib.rs            composition root: builds the adapters, wires them, prints
               ↑
             main.rs           SIGPIPE, then ccs::run(args)
@@ -89,7 +89,7 @@ dir.
 | `KitStore` | kits, and building them into plugins | `fs_kits` |
 | `Legacy` | the old layout and stock `~/.claude`, read only | `fs_legacy` |
 | `Fetcher` | clone and pull plugin repositories | `git_fetcher` |
-| `Releases` | find, download, verify, install a release | `gh_releases` |
+| `Releases` | find, download, verify, install a release | `curl_releases` |
 | `Launcher` | start Claude Code | `exec_launcher` |
 | `PinLocator` | find `.claude-profile` | `fs_pins` |
 | `PathInput` | expand and complete paths typed in the TUI | `fs_paths` |
@@ -119,8 +119,8 @@ adapter. A rule that changes several stores together lives here. For example,
 `src/lib.rs` is the only file that names a concrete adapter, prints, or reads
 configuration from the environment. An adapter touches the environment only
 for its own mechanics: `ExecLauncher` looks for its program on `PATH`,
-`GitFetcher` and `GhReleases` make folders under `temp_dir()`, and
-`GhReleases` finds the running binary with `current_exe()`.
+`GitFetcher` and `CurlReleases` make folders under `temp_dir()`, and
+`CurlReleases` finds the running binary with `current_exe()`.
 
 `lib.rs` also exports one factory per port it can build from a path or a
 variable: `profile_store`, `legacy`, `library`, `kit_store`, `path_input`,
@@ -129,7 +129,7 @@ variable: `profile_store`, `legacy`, `library`, `kit_store`, `path_input`,
 port. `dispatch`:
 
 1. reads `HOME` and `CCS_HOME`, plus the `CCS_*_BIN` overrides (`claude`,
-   `aws`, `git`, `gh`)
+   `aws`, `git`, `curl`)
 2. builds the adapters every command shares, once, rooted at `$CCS_HOME`
 3. parses the command with `domain::parse_command`
 4. calls the use case, prints its result, and returns an exit code
@@ -141,13 +141,13 @@ uses, in its own branch:
 - the editor is `$VISUAL`, else `$EDITOR`, else `vi`; `library` and `kit`
   build their own `ProcessEditor`
 - the TUI's shell is a second `ExecLauncher`, running `$SHELL` (else `/bin/sh`)
-- `upgrade` builds `GhReleases` from `CCS_GH_BIN` and `CCS_REPO` (default
+- `upgrade` builds `CurlReleases` from `CCS_CURL_BIN` and `CCS_REPO` (default
   `gaberger/ccs`)
 - `statusline` builds `ProcessRunner` and `FsText` on each call, and passes the
   whole environment to the use case
 
 The `CCS_*_BIN` variables are how the tests replace `claude`, `aws`, `git` and
-`gh` with scripts, while still running the real binary.
+`curl` with scripts, while still running the real binary.
 
 ## A launch, end to end
 
@@ -269,7 +269,7 @@ once (ADR-2610261237 §3).
 A `vX.Y.Z` tag runs `.github/workflows/release.yml`, which builds archives for
 macOS (aarch64, x86_64) and Linux (x86_64) and publishes them with
 `SHA256SUMS.txt`. `usecases::upgrade` downloads the archive for this platform
-through `Releases` (the `gh` CLI). It installs
+through `Releases` (`curl`). It installs
 the new binary over the running one only if all of these hold:
 
 - the checksum matches the published one
@@ -278,7 +278,7 @@ the new binary over the running one only if all of these hold:
 
 If any step fails, nothing is installed (ADR-2610271000). Whatever the
 outcome, `Releases::discard` removes the download folder after every attempt;
-if the download itself fails, `GhReleases` removes the folder it made.
+if the download itself fails, `CurlReleases` removes the folder it made.
 
 ## The gate
 
@@ -296,7 +296,7 @@ failure, not a pass. The tests are split by what they guard:
 | `domain.rs` | pure rules, no disk or process |
 | `profiles.rs`, `kits.rs`, `plugins.rs`, `migrate.rs` | the stores and the real binary, each in a temp `$CCS_HOME` |
 | `cli.rs` | the real binary end to end, with a fake `claude` that prints its env and args |
-| `upgrade.rs` | `ccs upgrade` against a fake `gh` serving archives built in the test |
+| `upgrade.rs` | `ccs upgrade` against a fake `curl` serving archives built in the test |
 | `assets.rs` | item front matter, typed paths, the real `App` behind `Browser` |
 | `tui.rs` | the column screen through keys and `TestBackend`, with a fake `Browser` shaped like the real library: the success test (G1), every key on screen first (G2), search order (G1b) |
 | `parity.rs` | each change made on the screen, its displayed `ccs` command run on a second home, the two homes compared (G3) |

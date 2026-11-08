@@ -5,7 +5,8 @@
 //! those reach a session through kits. A dir holding the old `native` marker is
 //! not a profile; `ccs migrate` retires it.
 
-use crate::ports::{parse_profile_env, Error, LoadedProfile, Name, ProfileStore};
+use crate::ports::{parse_profile_env, Error, LoadedProfile, Name, ProfileStore, ToolPermissions};
+use serde_json::{Map, Value};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -175,6 +176,46 @@ impl ProfileStore for FsProfileStore {
         fs::write(&path, text).map_err(io_err("cannot write", &path))
     }
 
+    fn permissions(&self, name: &Name) -> Result<ToolPermissions, Error> {
+        let path = self.config(name).join(SETTINGS_FILE);
+        let root = read_settings(&path)?;
+        let Some(perms) = root.get("permissions") else { return Ok(ToolPermissions::default()) };
+        let perms = perms.as_object().ok_or_else(|| Error::Io(format!("{}: \"permissions\" is not an object; fix it by hand", path.display())))?;
+        let allow = match perms.get("allow") {
+            None => vec![],
+            Some(Value::Array(a)) => a
+                .iter()
+                .map(|v| v.as_str().map(String::from).ok_or_else(|| Error::Io(format!("{}: \"allow\" holds something that is not text", path.display()))))
+                .collect::<Result<_, _>>()?,
+            Some(_) => return Err(Error::Io(format!("{}: \"allow\" is not a list; fix it by hand", path.display()))),
+        };
+        Ok(ToolPermissions { mode: perms.get("defaultMode").and_then(Value::as_str).map(String::from), allow })
+    }
+
+    fn set_permissions(&self, name: &Name, p: &ToolPermissions) -> Result<(), Error> {
+        let path = self.config(name).join(SETTINGS_FILE);
+        // Parsed before anything is touched: a file that does not parse is never replaced.
+        let mut root = read_settings(&path)?;
+        let perms = root.entry("permissions").or_insert_with(|| Value::Object(Map::new()));
+        let perms = perms.as_object_mut().ok_or_else(|| Error::Io(format!("{}: \"permissions\" is not an object; fix it by hand", path.display())))?;
+        if let Some(mode) = &p.mode {
+            perms.insert("defaultMode".into(), Value::String(mode.clone()));
+        }
+        perms.insert("allow".into(), Value::Array(p.allow.iter().cloned().map(Value::String).collect()));
+        let mut text = serde_json::to_string_pretty(&Value::Object(root)).map_err(|e| Error::Io(format!("{}: {e}", path.display())))?;
+        text.push('\n');
+        if path.is_file() {
+            let bak = path.with_file_name(format!("{SETTINGS_FILE}.bak-ccs"));
+            fs::copy(&path, &bak).map_err(io_err("cannot back up to", &bak))?;
+        }
+        // Whole or not at all: write beside it, then rename over.
+        let tmp = path.with_file_name(format!(".{SETTINGS_FILE}.ccs-{}", std::process::id()));
+        fs::write(&tmp, text).and_then(|()| fs::rename(&tmp, &path)).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            io_err("cannot write", &path)(e)
+        })
+    }
+
     fn write_settings_if_absent(&self, name: &Name, text: &str) -> Result<bool, Error> {
         let path = self.config(name).join(SETTINGS_FILE);
         // create_new: never replace a settings.json, even one made a moment ago.
@@ -187,5 +228,20 @@ impl ProfileStore for FsProfileStore {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
             Err(e) => Err(io_err("cannot write", &path)(e)),
         }
+    }
+}
+
+/// The top-level object of a settings file; a missing file is an empty one.
+/// A file that does not parse, or is not an object, is an error and is never replaced.
+fn read_settings(path: &Path) -> Result<Map<String, Value>, Error> {
+    let text = match fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Map::new()),
+        Err(e) => return Err(io_err("cannot read", path)(e)),
+    };
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(m)) => Ok(m),
+        Ok(_) => Err(Error::Io(format!("{}: not a JSON object; fix it by hand", path.display()))),
+        Err(e) => Err(Error::Io(format!("{}: not valid JSON ({e}); fix it by hand, ccs will not overwrite it", path.display()))),
     }
 }

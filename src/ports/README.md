@@ -10,7 +10,7 @@ directories, so a test can back it with a temp dir.
 There are two kinds of port here:
 
 - **Driven (secondary) ports**: 13 traits that `usecases/` calls and that
-  `adapters/secondary/` implements (filesystem, git, `gh`, AWS CLI, processes).
+  `adapters/secondary/` implements (filesystem, git, `curl`, AWS CLI, processes).
 - **Driving (primary) port**: `Browser`, which `usecases::App` implements and
   the TUI in `adapters/primary/` calls. A primary adapter reaches the
   application only through this trait. To draw its pages it also uses the
@@ -33,7 +33,7 @@ port-local names, so an adapter imports nothing but `crate::ports`.
 | `Legacy` | Layout left by earlier ccs versions and the stock `~/.claude`; read-only except `retire` | `FsLegacy` (`fs_legacy.rs`) |
 | `PathInput` | Expand and tab-complete paths typed into the TUI | `FsPathInput` (`fs_paths.rs`) |
 | `Editor` | Open a file in the user's editor and wait | `ProcessEditor` (`process_editor.rs`) |
-| `Releases` | Latest release tag, download assets, read a downloaded file, SHA-256, unpack, probe, install the binary, discard | `GhReleases` (`gh_releases.rs`) |
+| `Releases` | Latest release tag, download assets, read a downloaded file, SHA-256, unpack, probe, install the binary, discard | `CurlReleases` (`curl_releases.rs`) |
 | `TextFiles` | Read a text file that may not exist | `FsText` (`fs_text.rs`) |
 | `CommandRunner` | Run another program with stdin and capture stdout (wrapping a status line command) | `ProcessRunner` (`process_runner.rs`) |
 | `AwsProfiles` | AWS CLI profile names and per-profile region | `AwsCli` (`aws_cli.rs`) |

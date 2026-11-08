@@ -8,6 +8,7 @@ use crate::domain::{
     kit_args, kit_name_for_profile, plan_launch, provider_label, rewrite_folder, render_exports, resolve, resolve_kit, status_segment, with_kits, AwsRow,
     agent_name_clashes, load_plan as plan_kits, resolve_lines, CcsError, LineGives, PluginContents, PluginPart, Finding, ImportOutcome, Kind, KitName, LaunchPlan, LegacyItem, LibItem, LibraryRemoved, LoadPlan,
     ListEntry, Overview, Profile, ProfileName, Use, Wrapped,
+    permission_preset, with_rules, PermCmd, Permissions,
 };
 use crate::ports::{
     AwsProfiles, Browser, CommandRunner, Editor, Fetcher, KitStore, Releases, TextFiles, Launcher, Legacy, Library, PathInput, PinLocator, ProfileStore,
@@ -221,6 +222,54 @@ pub fn doctor(
 /// The profile as shell exports, for `eval "$(ccs env work)"`.
 pub fn exports(store: &dyn ProfileStore, name: &ProfileName) -> Result<String, CcsError> {
     Ok(render_exports(&plan_launch(&store.load(name)?, vec![])))
+}
+
+/// `ccs permissions`: the lines to print. Rules are checked before the file is touched.
+pub fn permissions(store: &dyn ProfileStore, name: &ProfileName, cmd: &PermCmd) -> Result<Vec<String>, CcsError> {
+    let have = store.permissions(name)?;
+    let shown = |p: &Permissions| {
+        let mut out = vec![format!("mode: {}", p.mode.as_deref().unwrap_or("(not set; claude asks)")), format!("allow ({}):", p.allow.len())];
+        out.extend(p.allow.iter().map(|r| format!("  {r}")));
+        out
+    };
+    match cmd {
+        PermCmd::Show => Ok(shown(&have)),
+        PermCmd::Add { rules, preset } => {
+            let (mode, from_preset): (Option<String>, Vec<String>) = match preset.as_deref().and_then(permission_preset) {
+                Some((m, r)) => (Some(m.to_string()), r.iter().map(|s| s.to_string()).collect()),
+                None => (None, vec![]),
+            };
+            let wanted: Vec<String> = from_preset.into_iter().chain(rules.iter().cloned()).collect();
+            let allow = with_rules(&have.allow, &wanted);
+            let added = allow.len() - have.allow.len();
+            let next = Permissions { mode: mode.or(have.mode.clone()), allow };
+            store.set_permissions(name, &next)?;
+            let mut out = vec![format!("Added {added} rule(s) to {}; {} already there.", name.as_str(), wanted.len() - added)];
+            if let Some(m) = &next.mode {
+                if have.mode.as_ref() != Some(m) {
+                    out.push(format!("Mode is now {m}."));
+                }
+            }
+            Ok(out)
+        }
+        PermCmd::Rm(rules) => {
+            let mut out = vec![];
+            for r in rules.iter().filter(|r| !have.allow.contains(r)) {
+                out.push(format!("{r}: not in the allow list"));
+            }
+            let allow: Vec<String> = have.allow.iter().filter(|r| !rules.contains(r)).cloned().collect();
+            let removed = have.allow.len() - allow.len();
+            if removed > 0 {
+                store.set_permissions(name, &Permissions { mode: None, allow })?;
+            }
+            out.push(format!("Removed {removed} rule(s) from {}.", name.as_str()));
+            Ok(out)
+        }
+        PermCmd::Mode(m) => {
+            store.set_permissions(name, &Permissions { mode: Some(m.clone()), allow: have.allow })?;
+            Ok(vec![format!("Mode of {} is now {m}.", name.as_str())])
+        }
+    }
 }
 
 /// What `ccs upgrade` did.

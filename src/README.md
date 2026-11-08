@@ -9,7 +9,7 @@ world sit at the edge:
 ```text
   domain  ←  ports  ←  usecases
                ↑
-          adapters (primary: the TUI; secondary: filesystem, git, gh, aws, exec)
+          adapters (primary: the TUI; secondary: filesystem, git, curl, aws, exec)
                ↑
        lib.rs — the composition root, which wires them once
 ```
@@ -45,7 +45,7 @@ command, and prints the result. A few small commands (`version`, `help`,
   `CcsError`.
 - Configuration comes from the environment only in `lib.rs`: `HOME` (required),
   `CCS_HOME`, `CCS_PROFILE`, `CCS_CLAUDE_BIN`, `CCS_AWS_BIN`, `CCS_GIT_BIN`,
-  `CCS_GH_BIN`, `CCS_REPO`, `VISUAL`, `EDITOR`, `SHELL`. Adapters read the
+  `CCS_CURL_BIN`, `CCS_REPO`, `VISUAL`, `EDITOR`, `SHELL`. Adapters read the
   environment only for their own mechanics (`PATH`, `temp_dir`, `current_exe`).
   `lib.rs` also reads the working directory, and passes the whole environment
   to `ccs statusline`, which reads `CLAUDE_CONFIG_DIR` and the status-segment
@@ -62,7 +62,7 @@ command, and prints the result. A few small commands (`version`, `help`,
   action and exits with the code `run` returns.
 - Replaces the process with `claude`, or with `$SHELL` for a profile's shell.
 - Everything else happens through the adapters: files under `$CCS_HOME`, reads
-  of `~/.claude`, `git`, `gh`, `aws`, the editor, and self-replacement on
+  of `~/.claude`, `git`, `curl`, `aws`, the editor, and self-replacement on
   `ccs upgrade`.
 
 ## Verification

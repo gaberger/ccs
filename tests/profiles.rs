@@ -371,6 +371,8 @@ impl<S: ccs::ports::ProfileStore> ccs::ports::ProfileStore for Failing<S> {
     }
     fn read_kits(&self, n: &ProfileName) -> Result<Vec<String>, CcsError> { self.inner.read_kits(n) }
     fn set_kits(&self, n: &ProfileName, kits: &[String]) -> Result<(), CcsError> { self.inner.set_kits(n, kits) }
+    fn permissions(&self, n: &ProfileName) -> Result<ccs::domain::Permissions, CcsError> { self.inner.permissions(n) }
+    fn set_permissions(&self, n: &ProfileName, p: &ccs::domain::Permissions) -> Result<(), CcsError> { self.inner.set_permissions(n, p) }
 }
 
 #[test]

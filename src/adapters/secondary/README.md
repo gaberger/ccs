@@ -4,12 +4,12 @@
 
 Secondary (driven) adapters implement the outbound port traits in
 `src/ports/mod.rs` against the real world: the filesystem under `$CCS_HOME`,
-the stock `~/.claude`, and the `aws`, `git`, `gh`, `tar`, `shasum` /
+the stock `~/.claude`, and the `aws`, `git`, `curl`, `tar`, `shasum` /
 `sha256sum`, `claude` and editor programs. Each file holds one adapter struct.
 Only the composition root (`src/lib.rs`) constructs these adapters, and it
-passes in the paths and the main program names (`claude`, `aws`, `git`, `gh`,
+passes in the paths and the main program names (`claude`, `aws`, `git`, `curl`,
 the editor), so tests can point them at temporary folders and stub binaries
-(`CCS_*_BIN` variables). `GhReleases` runs `tar` and `shasum` / `sha256sum`
+(`CCS_*_BIN` variables). `CurlReleases` runs `tar` and `shasum` / `sha256sum`
 by fixed name. Adapters also read `PATH`, `temp_dir()` and `current_exe()`
 themselves.
 
@@ -26,7 +26,7 @@ themselves.
 | `fs_pins.rs` | `FsPinLocator::new(start)` | `PinLocator` | `pinned()` returns the first non-empty `.claude-profile` found in `start` or one of its parents. |
 | `fs_store.rs` | `FsProfileStore::new(home)` | `ProfileStore` | Profiles stored as `<name>/profile.env`, `<name>/kits` and `<name>/config/` (the profile's `CLAUDE_CONFIG_DIR`), plus `$CCS_HOME/.default`. Methods: `folder`, `env_file`, `names`, `exists`, `load`, `create(name, from)`, `default_name`/`set_default`/`clear_default`, `kits`/`set_kits`, `write_env`, `write_settings_if_absent`. |
 | `fs_text.rs` | `FsText` | `TextFiles` | `read(path)` returns `None` when a settings file is missing or unreadable. Used by the status line. |
-| `gh_releases.rs` | `GhReleases::new(gh, repo)` | `Releases` | Backs `ccs upgrade`. Methods: `latest`, `download(tag, assets)` (into a temporary folder), `read`, `sha256`, `unpack` (`tar xzf`, takes out `ccs`), `probe` (runs `<bin> version`), `install` (replaces the running binary), `discard`. |
+| `curl_releases.rs` | `CurlReleases::new(curl, repo)` | `Releases` | Backs `ccs upgrade`. Methods: `latest`, `download(tag, assets)` (into a temporary folder), `read`, `sha256`, `unpack` (`tar xzf`, takes out `ccs`), `probe` (runs `<bin> version`), `install` (replaces the running binary), `discard`. |
 | `git_fetcher.rs` | `GitFetcher::new(program)` | `Fetcher` | `clone_temp(url)` makes a shallow clone into a fresh temporary folder. `pull(dir)` runs a fast-forward-only pull and reports the change. `discard(dir)` deletes a folder. |
 | `process_editor.rs` | `ProcessEditor::new(command)` | `Editor` | `edit(path)` runs the editor command (`$VISUAL` / `$EDITOR`, default `vi`, chosen in `src/lib.rs`) on the file's canonical path and waits for it to exit. An empty command is `Error::Usage`. |
 | `process_runner.rs` | `ProcessRunner` | `CommandRunner` | `run(argv, stdin)` runs a wrapped status-line command, sends `stdin` to it, and returns its stdout. |
@@ -65,7 +65,7 @@ themselves.
   `config/settings.json` only, never login state or history.
 - **`settings.json` is never replaced.** `write_settings_if_absent` opens the
   file with `create_new` and returns `false` if the file exists.
-- **No partial binary is installed.** `GhReleases::install` copies the new
+- **No partial binary is installed.** `CurlReleases::install` copies the new
   binary to `.ccs-upgrade-<pid>` beside the running one, sets its mode to
   `0755`, and renames it over the running binary. If any step fails,
   the copy included, it removes the temporary file. A failed `download` removes its folder.
@@ -99,7 +99,7 @@ themselves.
   stdin from a separate thread.
 - **Git never asks for input.** `GitFetcher` sets `GIT_TERMINAL_PROMPT=0` and
   closes stdin.
-- **Unix only.** `exec_launcher.rs`, `fs_kits.rs` and `gh_releases.rs` use
+- **Unix only.** `exec_launcher.rs`, `fs_kits.rs` and `curl_releases.rs` use
   `std::os::unix`.
 
 ## Side Effects
@@ -111,8 +111,8 @@ themselves.
   directories for path completion. Creates temporary dirs in the system temp
   folder (`ccs-clone-*`, `ccs-upgrade-*`). Replaces the running `ccs`
   executable on upgrade.
-- **Processes:** runs `aws`, `git` (network: clone and pull), `gh` (network:
-  release view and download, default `gaberger/ccs`),
+- **Processes:** runs `aws`, `git` (network: clone and pull), `curl` (network:
+  latest tag and download, default `gaberger/ccs`),
   `tar`, `shasum` / `sha256sum`, the downloaded `ccs version`, the user's
   editor (in the foreground, attached to the terminal) and the status-line
   command.

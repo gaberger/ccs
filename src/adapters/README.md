@@ -22,8 +22,8 @@ it hands the adapters to the use cases as port trait objects.
   port:
   - Filesystem: `FsProfileStore`, `FsKitStore`, `FsLibrary`, `FsLegacy`,
     `FsPathInput`, `FsPinLocator`, `FsText`.
-  - External programs: `AwsCli` (`aws`), `GitFetcher` (`git`), `GhReleases`
-    (`gh`, `tar`, `shasum`), `ProcessEditor` (`$VISUAL` / `$EDITOR`),
+  - External programs: `AwsCli` (`aws`), `GitFetcher` (`git`), `CurlReleases`
+    (`curl`, `tar`, `shasum`), `ProcessEditor` (`$VISUAL` / `$EDITOR`),
     `ProcessRunner` (the status-line command), `ExecLauncher` (`exec`s
     `claude`, or `$SHELL` for a profile's shell).
 
@@ -46,7 +46,7 @@ it hands the adapters to the use cases as port trait objects.
   events).
 - Secondary: reads and writes under `$CCS_HOME`, including the trash. Reads
   `~/.claude` (never writes it). Creates temporary clone and download folders.
-  Runs `aws`, `git`, `gh`, `tar`, the hash tools, the editor and the
+  Runs `aws`, `git`, `curl`, `tar`, the hash tools, the editor and the
   status-line command. Replaces the `ccs` binary on upgrade. Replaces the
   process with `claude` on launch, or with `$SHELL` for a profile's shell.
 

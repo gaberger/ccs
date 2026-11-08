@@ -5,7 +5,7 @@
 //! or directories, which is why a test can swap it for a temp dir.
 
 use crate::domain::{
-    AwsRow, CcsError, ImportOutcome, Kind, KitName, LaunchPlan, LegacyItem, LegacyLayout, LibItem, LibraryRemoved, ListEntry, Overview, Profile,
+    AwsRow, CcsError, ImportOutcome, Kind, KitName, LaunchPlan, LegacyItem, LegacyLayout, LibItem, LibraryRemoved, ListEntry, Overview, Permissions, Profile,
     ProfileName, Use,
 };
 
@@ -14,7 +14,7 @@ pub use crate::domain::{
     front_matter_description, front_matter_name, manifest_field, pick_in, rank, resolve_kit, Found, LineGives, LoadPlan, PlannedKit, PluginContents, PluginPart, AwsRow as AwsProfileRow, ImportOutcome as AwsImport, library_tree, parse_env as parse_profile_env, pick, CcsError as Error, Finding,
     Kind as ItemKind, KitName as Kit, LaunchPlan as Plan, LegacyItem as OldItem, LegacyLayout as OldLayout,
     LegacyProfile as OldProfile, LibItem as LibraryItem, LibraryRemoved as Removed, ListEntry as ProfileRow,
-    Overview as ProfileOverview, Pick, Profile as LoadedProfile, ProfileName as Name, TreeRow, Use as Entry,
+    Overview as ProfileOverview, Permissions as ToolPermissions, Pick, Profile as LoadedProfile, ProfileName as Name, TreeRow, Use as Entry,
 };
 
 /// Where profiles are kept. A profile is a login: its variables, its default
@@ -50,6 +50,11 @@ pub trait ProfileStore {
         self.read_kits(name).unwrap_or_default()
     }
     fn set_kits(&self, name: &ProfileName, kits: &[String]) -> Result<(), CcsError>;
+    /// The `permissions` of the profile's `settings.json`. No file is none; a file that does not parse is an error.
+    fn permissions(&self, name: &ProfileName) -> Result<Permissions, CcsError>;
+    /// Set those permissions in `settings.json`, changing nothing else in it. The file it
+    /// replaces is kept as `settings.json.bak-ccs`. A file that does not parse is never replaced.
+    fn set_permissions(&self, name: &ProfileName, p: &Permissions) -> Result<(), CcsError>;
 }
 
 /// Every skill and agent, kept in folders, and every plugin, which has none (ADR-2610261643).

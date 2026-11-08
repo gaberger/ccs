@@ -27,7 +27,7 @@ the screen, [ADR-2610281305](docs/adrs/ADR-2610281305-profile-first-columns.md).
 
 - Claude Code (`claude` on your PATH), with `--plugin-dir`
 - macOS (Apple silicon or Intel) or Linux (x86_64) for a release; any Unix from source
-- From a release: the GitHub CLI, `gh` (`ccs upgrade` and the install line below use it)
+- From a release: `curl` and `tar` (`ccs upgrade` and the install line below use them; no GitHub login, no `gh`)
 - From source: Rust 1.89+ (`cargo`): kit saves take a file lock with `std::fs::File::lock`, stable since 1.89 (`ratatui` 0.30 needs 1.88)
 
 ## Install
@@ -35,7 +35,9 @@ the screen, [ADR-2610281305](docs/adrs/ADR-2610281305-profile-first-columns.md).
 From a release, with no Rust needed:
 
 ```bash
-gh release download --repo gaberger/ccs -p "ccs-*-$(uname -m | sed s/arm64/aarch64/)-$( [ "$(uname)" = Darwin ] && echo apple-darwin || echo unknown-linux-gnu).tar.gz" -O - | tar xz -C ~/.local/bin ccs
+v=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/gaberger/ccs/releases/latest); v=${v##*/v}
+t=$(uname -m | sed s/arm64/aarch64/)-$( [ "$(uname)" = Darwin ] && echo apple-darwin || echo unknown-linux-gnu)
+curl -fsSL "https://github.com/gaberger/ccs/releases/download/v$v/ccs-$v-$t.tar.gz" | tar xz -C ~/.local/bin ccs
 ccs version
 ```
 
@@ -46,6 +48,25 @@ the new binary once. `ccs upgrade --check` only says what is available;
 a release; see [ADR-2610271000](docs/adrs/ADR-2610271000-release-and-upgrade.md).
 
 From source: `./start.sh --install`.
+
+### Permissions
+
+A profile's `settings.json` (in its `config/`) holds what its claude may do
+without asking. `ccs permissions` edits it, so you do not need `jq` or to know
+where the file is:
+
+```bash
+ccs permissions tt-gemma add --preset dev   # the dev rule set, and mode acceptEdits
+ccs permissions tt-gemma add 'Bash(make:*)' Read
+ccs permissions tt-gemma rm Read
+ccs permissions tt-gemma mode plan          # default | acceptEdits | plan | dontAsk | bypassPermissions
+ccs permissions tt-gemma                    # show
+```
+
+Rules already there stay in their order and are never repeated; nothing else in
+the file is touched or reordered. The file it replaces is kept as
+`settings.json.bak-ccs`, and a `settings.json` that does not parse is refused,
+never overwritten. See [ADR-2610281700](docs/adrs/ADR-2610281700-ccs-permissions.md).
 
 ## Quick Start
 
@@ -91,6 +112,8 @@ ccs env [<name>]               print exports: eval "$(ccs env work)"
 ccs doctor [<name>]            check a profile and its kits; exits 1 on a failure
 ccs loads [<name>]             what a profile loads: each kit, line and item; builds nothing
 ccs which                      print the resolved profile
+ccs permissions [<p>] [add <rule>… | add --preset dev | rm <rule>… | mode <m>]
+                               show or change what a profile's claude may do without asking
 ccs ui                         the same screen, from anywhere
 ccs statusline [-- <cmd…>]     status line segment; wraps an existing status line command
 ccs statusline --auto          what every launch sets: the segment, the profile's own status line, then the project's
@@ -265,7 +288,7 @@ src/
   adapters/secondary/fs_pins.rs        — finds .claude-profile
   adapters/secondary/exec_launcher.rs  — replaces the process with claude
   adapters/secondary/git_fetcher.rs    — clones and pulls plugins with git
-  adapters/secondary/gh_releases.rs    — downloads releases with gh; installs over the running binary
+  adapters/secondary/curl_releases.rs  — downloads releases with curl; installs over the running binary
   adapters/secondary/fs_text.rs        — reads settings files for the status line
   adapters/secondary/process_editor.rs — opens $VISUAL / $EDITOR
   adapters/secondary/process_runner.rs — runs a wrapped status line command
@@ -316,7 +339,7 @@ the TUI (a primary adapter) imports `ports/` only.
 | `CCS_CLAUDE_BIN` | Program to launch instead of `claude`. The tests use a script that prints its arguments. |
 | `CCS_AWS_BIN` | Program to run instead of `aws`. The tests use a fake. |
 | `CCS_GIT_BIN` | Program to run instead of `git`, for plugins. |
-| `CCS_GH_BIN` | Program to run instead of `gh`, for `ccs upgrade`. The tests use a fake. |
+| `CCS_CURL_BIN` | Program to run instead of `curl`, for `ccs upgrade`. The tests use a fake. |
 | `CCS_REPO` | Where `ccs upgrade` looks for releases. Default `gaberger/ccs`. |
 | `VISUAL`, `EDITOR` | The editor `edit` and the TUI's `e` open. Default `vi`. |
 | `SHELL` | The shell a profile's `shell` opens in the TUI. Default `/bin/sh`. |
@@ -328,7 +351,7 @@ each part of the code keeps, for a person or an agent about to change it.
 [What This Does](#what-this-does) says what ccs is for. In code terms, ccs is
 one Rust binary in hexagonal layers. `src/domain` holds the rules, `src/ports`
 the contracts, `src/usecases` one function per command, and `src/adapters` the
-TUI and the code that touches files, `git`, `gh`, `aws` and `claude`.
+TUI and the code that touches files, `git`, `curl`, `aws` and `claude`.
 `src/lib.rs` wires them once.
 
 ## Local Interface & Invariants
@@ -366,9 +389,9 @@ TUI and the code that touches files, `git`, `gh`, `aws` and `claude`.
   library, kits, `.build/` and `.trash/`.
 - Reads `~/.claude` for import and migration, and `.claude-profile` pin files.
 - External programs: `claude` (by exec), `$SHELL` (by exec, for a profile's
-  shell in the TUI), `git`, `gh`, `aws`, `tar`, a checksum
+  shell in the TUI), `git`, `curl`, `aws`, `tar`, a checksum
   tool, the editor and a wrapped status line command.
-- Network through `git` and `gh`. `ccs upgrade` replaces the running binary.
+- Network through `git` and `curl`. `ccs upgrade` replaces the running binary.
 
 ## System Verification
 

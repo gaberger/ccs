@@ -29,7 +29,7 @@ pub const PROVIDER_VARS: &[&str] = &[
 const RESERVED: &[&str] = &[
     "list", "ls", "new", "import", "default", "env", "link", "doctor", "which", "help", "statusline", "skill", "skills",
     "agent", "agents", "claude-md", "claudemd", "ui", "shared", "kit", "kits", "library", "lib", "migrate", "upgrade", "version",
-    "sync", "loads",
+    "sync", "loads", "permissions", "perms",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,6 +229,8 @@ pub enum Command {
     ImportAws { profiles: Vec<String>, all: bool, region: Option<String> },
     /// Convert the layout earlier versions left (ADR-2610261643 §5).
     Migrate,
+    /// A profile's tool permissions, in its `settings.json` (ADR-2610281700).
+    Permissions { profile: Option<String>, cmd: PermCmd },
     Library(LibraryCmd),
     Kit(KitCmd),
 }
@@ -413,6 +415,7 @@ pub fn parse_command(args: &[String], is_profile: impl Fn(&str) -> bool) -> Resu
         Some("env") => Command::Env(second()),
         Some("doctor") => Command::Doctor(second()),
         Some("loads") => Command::Loads(second()),
+        Some("permissions" | "perms") => parse_permissions(&args[1..])?,
         Some("new") => {
             let usage = || CcsError::Usage("ccs new <name> [--from <profile>]".into());
             let name = second().ok_or_else(usage)?;
@@ -447,6 +450,97 @@ fn parse_import_aws(rest: &[String]) -> Result<Command, CcsError> {
 
 fn truthy(v: &str) -> bool {
     matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+}
+
+// ── Permissions (ADR-2610281700) ────────────────────────────────────────────
+
+/// What `ccs permissions` does to a profile's `settings.json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermCmd {
+    Show,
+    Add { rules: Vec<String>, preset: Option<String> },
+    Rm(Vec<String>),
+    Mode(String),
+}
+
+/// The permission lists of a settings file; `None`/empty when absent.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Permissions {
+    pub mode: Option<String>,
+    pub allow: Vec<String>,
+}
+
+const PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"];
+
+/// A named set of rules and the mode that goes with it.
+pub fn permission_preset(name: &str) -> Option<(&'static str, &'static [&'static str])> {
+    match name {
+        "dev" => Some(("acceptEdits", &[
+            "Bash(git:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)", "Bash(rg:*)",
+            "Bash(find:*)", "Bash(sed -n:*)", "Bash(diff:*)", "Bash(jq:*)", "Bash(stat:*)", "Bash(which:*)", "Bash(ps:*)", "Bash(ss:*)",
+            "Bash(df:*)", "Bash(du:*)", "Bash(free:*)", "Bash(journalctl:*)", "Bash(systemctl status:*)", "Bash(curl:*)", "Bash(docker:*)",
+            "Bash(tt-smi:*)", "Bash(tt-toplike:*)", "Bash(weave:*)", "Bash(herdr:*)", "Bash(python3:*)", "Bash(python:*)", "Bash(pip:*)",
+            "Bash(uv:*)", "Bash(node:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(make:*)", "Bash(cargo:*)", "Bash(go:*)", "Bash(pytest:*)",
+            "Bash(mkdir:*)", "Bash(touch:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(echo:*)", "Bash(gh:*)", "Read", "Glob", "Grep", "WebFetch",
+            "WebSearch",
+        ])),
+        _ => None,
+    }
+}
+
+/// A rule Claude Code can read: `Tool` or `Tool(specifier)`, on one line.
+fn check_rule(rule: &str) -> Result<(), CcsError> {
+    let bad = |why: &str| CcsError::Usage(format!("'{}' is not a permission rule: {why} (like Read, or Bash(git:*))", rule.escape_debug()));
+    if rule.is_empty() || rule.trim() != rule {
+        return Err(bad("empty, or spaces at an end"));
+    }
+    if rule.chars().any(char::is_control) {
+        return Err(bad("a control character"));
+    }
+    if !rule.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        return Err(bad("it starts with a tool name"));
+    }
+    if rule.contains('(') != rule.ends_with(')') {
+        return Err(bad("unbalanced parentheses"));
+    }
+    Ok(())
+}
+
+/// `rules` appended to `have`: existing order kept, nothing twice.
+pub fn with_rules(have: &[String], rules: &[String]) -> Vec<String> {
+    let mut out = have.to_vec();
+    for r in rules {
+        if !out.contains(r) {
+            out.push(r.clone());
+        }
+    }
+    out
+}
+
+fn parse_permissions(rest: &[String]) -> Result<Command, CcsError> {
+    let usage = || CcsError::Usage("ccs permissions [<profile>] [add <rule>… | add --preset dev | rm <rule>… | mode <default|acceptEdits|plan|dontAsk|bypassPermissions>]".into());
+    let verb = |s: &str| matches!(s, "add" | "rm" | "remove" | "mode" | "show");
+    let (profile, rest) = match rest.first() {
+        Some(first) if !verb(first) => (Some(first.clone()), &rest[1..]),
+        _ => (None, rest),
+    };
+    let words: Vec<&str> = rest.iter().map(String::as_str).collect();
+    let cmd = match words.as_slice() {
+        [] | ["show"] => PermCmd::Show,
+        ["add", "--preset", p] => {
+            permission_preset(p).ok_or_else(|| CcsError::Usage(format!("no preset '{p}'; there is: dev")))?;
+            PermCmd::Add { rules: vec![], preset: Some(p.to_string()) }
+        }
+        ["add", rules @ ..] if !rules.is_empty() => {
+            rules.iter().try_for_each(|r| check_rule(r))?;
+            PermCmd::Add { rules: rules.iter().map(|s| s.to_string()).collect(), preset: None }
+        }
+        ["rm" | "remove", rules @ ..] if !rules.is_empty() => PermCmd::Rm(rules.iter().map(|s| s.to_string()).collect()),
+        ["mode", m] if PERMISSION_MODES.contains(m) => PermCmd::Mode(m.to_string()),
+        ["mode", m] => return Err(CcsError::Usage(format!("'{m}' is not a mode: {}", PERMISSION_MODES.join(", ")))),
+        _ => return Err(usage()),
+    };
+    Ok(Command::Permissions { profile, cmd })
 }
 
 // ── The library and kits (ADR-2610261643) ───────────────────────────────────
@@ -1382,6 +1476,8 @@ A launch is a profile plus kits. Nothing starts until you choose a profile.
   ccs doctor [<name>]            check a profile and its kits
   ccs loads [<name>]             what a profile loads: each kit, line and item (builds nothing)
   ccs which                      print the resolved profile
+  ccs permissions [<p>] [add <rule>… | add --preset dev | rm <rule>… | mode <m>]
+                                 show or change what a profile's claude may do without asking
   ccs ui                         browse profiles, kits and the library; launch from the list
   ccs statusline [-- <cmd…>]     status line segment; wraps an existing status line command
   ccs statusline --auto          what every launch sets: the segment, the profile's own status line, then the project's
@@ -1389,7 +1485,7 @@ A launch is a profile plus kits. Nothing starts until you choose a profile.
   ccs import aws [<p>…] [--all] [--region <r>]
                                  list AWS CLI profiles, or import them as Bedrock profiles
   ccs migrate                    convert the shared/ and native layout of earlier versions
-  ccs upgrade [--check | <ver>]  install the latest release (or <ver>) over this ccs; needs gh
+  ccs upgrade [--check | <ver>]  install the latest release (or <ver>) over this ccs; needs curl
   ccs version                    print the version
 
   ccs library list [skills|agents|plugins] | add <path|owner/repo|git URL> [--in <folder>] | mkdir skills/<folder>

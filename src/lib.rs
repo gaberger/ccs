@@ -10,7 +10,7 @@
 //!                ↑
 //!           adapters (secondary): FsProfileStore, FsPinLocator, ExecLauncher,
 //!                                 ProcessRunner, AwsCli, FsPathInput, ProcessEditor,
-//!                                 FsLibrary, FsKitStore, FsLegacy, GitFetcher, GhReleases, FsText
+//!                                 FsLibrary, FsKitStore, FsLegacy, GitFetcher, CurlReleases, FsText
 //!                ↑
 //!        lib.rs — wires them, once
 //! ```
@@ -23,8 +23,8 @@ pub mod ports;
 pub mod usecases;
 
 use adapters::secondary::{
-    aws_cli::AwsCli, exec_launcher::ExecLauncher, fs_kits::FsKitStore, fs_legacy::FsLegacy, fs_library::FsLibrary,
-    fs_history::FsHistory, fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, fs_text::FsText, gh_releases::GhReleases, git_fetcher::GitFetcher,
+    aws_cli::AwsCli, curl_releases::CurlReleases, exec_launcher::ExecLauncher, fs_kits::FsKitStore, fs_legacy::FsLegacy, fs_library::FsLibrary,
+    fs_history::FsHistory, fs_paths::FsPathInput, fs_pins::FsPinLocator, fs_store::FsProfileStore, fs_text::FsText, git_fetcher::GitFetcher,
     process_editor::ProcessEditor, process_runner::ProcessRunner, tty_typer::TtyTyper,
 };
 use adapters::primary::tui;
@@ -251,6 +251,13 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             print!("{}", usecases::exports(&store, &resolve(n)?)?);
             Ok(0)
         }
+        Command::Permissions { profile, cmd } => {
+            let name = resolve(profile)?;
+            for line in usecases::permissions(&store, &name, &cmd)? {
+                println!("{line}");
+            }
+            Ok(0)
+        }
         Command::Loads(n) => {
             let name = resolve(n)?;
             print!("{}", usecases::loads(&name, &usecases::load_plan(&store, &kits, &lib, &name, None)?));
@@ -281,7 +288,7 @@ fn dispatch(args: Vec<String>) -> Result<i32, CcsError> {
             Ok(0)
         }
         Command::Upgrade { version, check } => {
-            let rel = GhReleases::new(var("CCS_GH_BIN").unwrap_or_else(|| "gh".into()), var("CCS_REPO").unwrap_or_else(|| "gaberger/ccs".into()));
+            let rel = CurlReleases::new(var("CCS_CURL_BIN").unwrap_or_else(|| "curl".into()), var("CCS_REPO").unwrap_or_else(|| "gaberger/ccs".into()));
             let target = domain::release_target(std::env::consts::OS, std::env::consts::ARCH);
             match usecases::upgrade(&rel, domain::VERSION, target, version.as_deref(), check)? {
                 usecases::Upgraded::UpToDate(v) => println!("ccs {v} is up to date"),
